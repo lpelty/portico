@@ -69,13 +69,13 @@ final class ThreadViewsTests: XCTestCase {
         let chats = [Self.main(3), Self.thread(5, slot: 1)]
         let on = ThreadsPresentation(chats: chats, current: 3)
         let items = ThreadMenuItem.items(threads: on, threadsOn: true)
-        XCTAssertEqual(items.map(\.title), ["Main", "Thread 1"])
+        XCTAssertEqual(items.map(\.title), ["Main", "Review the pricing page on its own."], "v0.28: a thread is listed under its name")
         XCTAssertEqual(items.map(\.slot), [0, 1])
         XCTAssertEqual(items.map(\.key), ["0", "1"])
         XCTAssertTrue(ThreadMenuItem.items(threads: on, threadsOn: false).isEmpty)
 
         let both = ThreadsPresentation(chats: chats + [Self.thread(6, slot: 2)], current: 6)
-        XCTAssertEqual(ThreadMenuItem.items(threads: both, threadsOn: true).map(\.title), ["Main", "Thread 1", "Thread 2"])
+        XCTAssertEqual(ThreadMenuItem.items(threads: both, threadsOn: true).map(\.slot), [0, 1, 2])
     }
 
     func testTheViewMenuUsesControlForTheThreadKeys() throws {
@@ -149,13 +149,13 @@ final class ThreadViewsTests: XCTestCase {
         model.open(chat: 3)
         XCTAssertEqual(model.sidebarCard?.chat, 3)
         let inMain = model.sidebarThreads.rows(now: Date())
-        XCTAssertEqual(inMain.map(\.label), ["Main", "Thread 1", "Thread 2"])
+        XCTAssertEqual(inMain.map { $0.number ?? $0.label }, ["Main", "Thread 1", "Thread 2"])
         XCTAssertEqual(inMain.filter(\.isOpen).map(\.chat), [3])
 
         model.switchToConversation(slot: 2)
         XCTAssertEqual(model.sidebarCard?.chat, 6)
         let inThread = model.sidebarThreads.rows(now: Date())
-        XCTAssertEqual(inThread.map(\.label), ["Main", "Thread 1", "Thread 2"], "the same order in a thread")
+        XCTAssertEqual(inThread.map { $0.number ?? $0.label }, ["Main", "Thread 1", "Thread 2"], "the same order in a thread")
         XCTAssertEqual(inThread.filter(\.isOpen).map(\.chat), [6])
     }
 
@@ -166,7 +166,7 @@ final class ThreadViewsTests: XCTestCase {
         model.open(chat: 1)
         XCTAssertEqual(model.sidebarCard?.chat, 3)
         let rows = model.sidebarThreads.rows(now: Date())
-        XCTAssertEqual(rows.map(\.label), ["Main", "Thread 1"], "an ended session is in History, not the list")
+        XCTAssertEqual(rows.map { $0.number ?? $0.label }, ["Main", "Thread 1"], "an ended session is in History, not the list")
         XCTAssertEqual(rows.filter(\.isOpen).map(\.chat), [3])
     }
 
@@ -179,7 +179,7 @@ final class ThreadViewsTests: XCTestCase {
         XCTAssertEqual(SessionCard.title(summary: Self.main(3), threadsOn: false), "Session 3")
         XCTAssertEqual(SessionSidebar.sectionLabel(threadsOn: true), "Conversations")
         XCTAssertEqual(SessionCard.title(summary: Self.main(3), threadsOn: true), "Main")
-        XCTAssertEqual(SessionCard.title(summary: Self.thread(5, slot: 1), threadsOn: true), "Thread 1")
+        XCTAssertEqual(SessionCard.title(summary: Self.thread(5, slot: 1), threadsOn: true), "Review the pricing page on its own.", "v0.28: the name leads")
     }
 
     func testTheCloseQuestion() {
@@ -197,8 +197,9 @@ final class ThreadViewsTests: XCTestCase {
         ]
         let choices = ThreadsPresentation(chats: chats, current: 3).limitChoices(now: now)
         XCTAssertEqual(choices.map(\.chat), [5, 6])
-        XCTAssertEqual(choices.map(\.label), ["Thread 1", "Thread 2"])
-        XCTAssertEqual(choices.map(\.line), ["Pricing page · last reply 20 min ago", "Onboarding copy · working now"])
+        // v0.28 (ZL3): the name, then the number and the activity.
+        XCTAssertEqual(choices.map(\.label), ["Pricing page", "Onboarding copy"])
+        XCTAssertEqual(choices.map(\.line), ["Thread 1 · last reply 20 min ago", "Thread 2 · working"])
     }
 
     // MARK: - closing
@@ -328,6 +329,7 @@ final class ThreadViewsTests: XCTestCase {
     func testThreadsKeepTheirLabelsWithAName() {
         let (model, _) = model(chats: [Self.main(3), Self.thread(5, slot: 1)])
         let rows = model.sidebarThreads.rows(now: Date(), agentName: model.hello?.brand.agentName)
-        XCTAssertEqual(rows.map(\.label), ["Acme (Main)", "Thread 1"])
+        XCTAssertEqual(rows.map(\.label), ["Acme (Main)", "Review the pricing page on its own."])
+        XCTAssertEqual(rows.map(\.number), [nil, "Thread 1"])
     }
 }

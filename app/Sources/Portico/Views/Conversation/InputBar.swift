@@ -257,7 +257,8 @@ struct InputBar: View {
         Self.placeholder(
             connected: connected, renewing: renewing, logging: logging, sending: sending, about: about,
             agentName: model.hello?.brand.agentName ?? model.brand.name,
-            thread: model.thread(of: chat)?.label,
+            thread: model.summary(of: chat).flatMap { $0.thread == nil ? nil : ThreadName.shown($0) },
+            unusedThread: model.isUnusedThread(chat: chat),
             questionDocked: model.dockedQuestion(for: chat) != nil)
     }
 
@@ -266,7 +267,7 @@ struct InputBar: View {
     /// then declines the question and goes as the reply (`replyDirectly`).
     static func placeholder(
         connected: Bool, renewing: Bool, logging: Bool, sending: Bool, about: String?, agentName: String, thread: String?,
-        questionDocked: Bool = false
+        unusedThread: Bool = false, questionDocked: Bool = false
     ) -> String {
         if !connected { return "Not connected" }
         if renewing { return "Starting the next session…" }
@@ -274,6 +275,8 @@ struct InputBar: View {
         if sending { return "Sending…" }
         if questionDocked { return "Or reply directly…" }
         if let about { return "Ask about \(URL(fileURLWithPath: about).lastPathComponent)" }
+        // v0.28: a thread nothing was sent to asks what it is for; then "Reply in <its name>".
+        if unusedThread { return ThreadName.unusedPlaceholder }
         if let thread { return "Reply in \(thread)" }
         return "Ask \(agentName), or drop a file here"
     }

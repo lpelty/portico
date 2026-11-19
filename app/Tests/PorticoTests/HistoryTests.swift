@@ -51,7 +51,7 @@ final class HistoryTests: XCTestCase {
     }
 
     func testAnEndedThreadIsTitledWithItsLabel() {
-        XCTAssertEqual(SessionPresentation(summary: endedThread(14, slot: 2, "Onboarding copy")).historyTitle, "Thread 2 · Onboarding copy")
+        XCTAssertEqual(SessionPresentation(summary: endedThread(14, slot: 2, "Onboarding copy")).historyTitle, "Onboarding copy · Thread 2")
         XCTAssertEqual(SessionPresentation(summary: endedThread(15, slot: 1, nil)).historyTitle, "Thread 1")
         XCTAssertEqual(SessionPresentation(summary: ended(1, "Plan for Acme")).historyTitle, "Plan for Acme")
         XCTAssertNil(SessionPresentation(summary: ended(2, nil)).historyTitle)

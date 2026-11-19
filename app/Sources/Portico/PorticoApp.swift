@@ -172,6 +172,12 @@ struct PorticoApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: Theme.defaultWindowSize.width, height: Theme.defaultWindowSize.height)
         .commands {
+            // v0.28 (PORT-77): File › New Thread, Control-T, as the sidebar's row.
+            CommandGroup(after: .newItem) {
+                Button("New Thread") { model.newThread() }
+                    .keyboardShortcut("t", modifiers: .control)
+                    .disabled(!model.canOpenThread || model.connection != .connected)
+            }
             CommandGroup(after: .sidebar) {
                 Button(model.sidebarVisible ? "Hide Sidebar" : "Show Sidebar") {
                     model.toggleSidebar()

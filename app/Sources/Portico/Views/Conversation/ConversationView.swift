@@ -749,7 +749,17 @@ struct ConversationView: View {
         return "\(items.count):\(last.id)"
     }
 
+    @ViewBuilder
     private var emptyState: some View {
+        if model.isUnusedThread(chat: chat) {
+            // v0.28 (PORT-77, ZL2): a thread the person opened says what it is before anything is sent.
+            NewThreadIntro()
+        } else {
+            sessionEmptyState
+        }
+    }
+
+    private var sessionEmptyState: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(model.isSinglePresentation ? "Session \(chat)" : "Chat #\(chat)")
                 .scaledFont(15, weight: .semibold)

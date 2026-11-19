@@ -41,7 +41,8 @@ struct SessionSidebar: View {
 
     /// "Thread 2 is still working. Close it anyway?" (`closingThread`).
     private var closeQuestion: String {
-        ThreadsPresentation.closeQuestion(label: model.closingThread.flatMap { model.thread(of: $0)?.label } ?? "This thread")
+        ThreadsPresentation.closeQuestion(
+            label: model.closingThread.flatMap { model.summary(of: $0) }.map(ThreadName.shown) ?? "This thread")
     }
 
     private var closeConfirm: Binding<Bool> {
@@ -70,6 +71,7 @@ struct EarlierRow: View {
     let summary: ChatSummary
     let selected: Bool
     let action: () -> Void
+    @EnvironmentObject private var model: AppModel
 
     /// The title's colour and weight: brighter and medium when selected.
     static func titleStyle(selected: Bool, untitled: Bool) -> (color: Color, weight: Font.Weight) {
@@ -87,12 +89,18 @@ struct EarlierRow: View {
                     .scaledFont(13, monospacedDigit: true)
                     .foregroundStyle(Theme.text2)
                     .frame(minWidth: 18, alignment: .leading)
-                Text(shown.historyTitle ?? "Untitled")
-                    .scaledFont(13, weight: title.weight)
-                    .foregroundStyle(title.color)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if model.renaming == summary.chat {
+                    // v0.28 (ZK3): a History row renames the same way.
+                    RenameField(chat: summary.chat, initial: shown.title ?? "", weight: .regular)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text(shown.historyTitle ?? "Untitled")
+                        .scaledFont(13, weight: title.weight)
+                        .foregroundStyle(title.color)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 loggedMark
                 if let when = SessionTime.parse(summary.ended ?? summary.created) {
                     CompactTime(date: when)
@@ -105,6 +113,10 @@ struct EarlierRow: View {
         .buttonStyle(HoverButtonStyle(shape: AnyShape(RoundedRectangle(cornerRadius: 6, style: .continuous))))
         .background(selected ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .focusEffectDisabled()
+        .contextMenu {
+            Button("Rename…") { model.renaming = summary.chat }
+                .disabled(model.connection != .connected)
+        }
         .tip(summary.logged == true ? "Logged" : summary.logged == false ? "Not logged" : "")
     }
 
@@ -150,10 +162,10 @@ struct SessionCard: View {
     /// Drawn as the conversation list's open row (threads on, §9.6).
     private var listed: Bool { model.threadsOn }
 
-    /// The card's name: "Main" or "Thread 1" in the conversation list;
-    /// with threads off, the shipped "Session N".
+    /// The card's name: "Main" or a thread's name in the conversation list
+    /// (v0.28: the name, not "Thread 1"); with threads off, the shipped "Session N".
     static func title(summary: ChatSummary, threadsOn: Bool, agentName: String? = nil) -> String {
-        if let label = summary.thread?.label { return label }
+        if summary.thread != nil { return ThreadName.shown(summary) }
         return threadsOn ? MainLabel.make(agentName: agentName).text : SessionPresentation(summary: summary).number
     }
     /// A thread's card (v0.16, AM3): Log session and Close thread, never New.
@@ -165,6 +177,8 @@ struct SessionCard: View {
     private var canLog: Bool { model.canLog }
     private var canLogSession: Bool { model.canLogSession(chat: chat) }
     private var renewLabel: String { canLog ? "Log and start new" : "Start new" }
+
+    static let newSessionLabel = "New session"
 
     /// The card opens the live session now.
     private var opensLive: Bool { model.cardOpensLiveSession(live: chat) }
@@ -287,18 +301,35 @@ struct SessionCard: View {
         HStack(spacing: 8) {
             ConversationIcon(isThread: info != nil)
             VStack(alignment: .leading, spacing: 1) {
-                ConversationName(
-                    label: Self.title(summary: summary, threadsOn: true, agentName: model.hello?.brand.agentName),
-                    mainName: info == nil ? MainLabel.make(agentName: model.hello?.brand.agentName).name : nil,
-                    weight: .semibold)
-                if let subtitle = listedSubtitle {
-                    Text(subtitle)
-                        .scaledFont(11)
-                        .foregroundStyle(Theme.text2)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                let name = SessionPresentation(summary: summary).title ?? ""
+                if model.renaming == chat, info != nil {
+                    // v0.28 (ZK2): the thread's name as a field.
+                    RenameField(chat: chat, initial: name, weight: .semibold)
+                    Text(RenameField.hint).scaledFont(11).foregroundStyle(Theme.text2).lineLimit(1)
+                } else {
+                    ConversationName(
+                        label: Self.title(summary: summary, threadsOn: true, agentName: model.hello?.brand.agentName),
+                        mainName: info == nil ? MainLabel.make(agentName: model.hello?.brand.agentName).name : nil,
+                        weight: .semibold
+                    )
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    if model.renaming == chat {
+                        // Main: its session title is what is renamed.
+                        RenameField(chat: chat, initial: name, weight: .regular)
+                    } else if let subtitle = listedSubtitle {
+                        Text(subtitle)
+                            .scaledFont(11)
+                            .foregroundStyle(Theme.text2)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                 }
             }
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) { model.renaming = chat }
+            .contextMenu { ConversationNameMenu(chat: chat, isThread: info != nil) }
+            .tip(info == nil ? "" : "\(ThreadName.shown(summary)) · \(info?.label ?? "")")
             Spacer(minLength: 0)
             if summary.state == .working {
                 ProgressView()
@@ -316,11 +347,12 @@ struct SessionCard: View {
         }
     }
 
-    /// Main's "Session 4 · started 1:30 PM"; a thread's title.
+    /// Main's "Session 4 · started 1:30 PM"; a thread's number (v0.28: its
+    /// name is the first line), "Thread 1 · nothing sent yet" before a message.
     private var listedSubtitle: String? {
         info == nil
             ? ThreadsPresentation.mainSubtitle(summary, open: true, calendar: .current, locale: .current)
-            : SessionPresentation(summary: summary).title
+            : ThreadName.numberLine(summary)
     }
 
     /// The line under the buttons: what they do, and, when Log session is
@@ -410,7 +442,8 @@ struct SessionCard: View {
                     Text("Starting…")
                 } else {
                     Image(systemName: "plus")
-                    Text("New")
+                    // v0.28 (ZL3): not to be mistaken for New thread, two rows below.
+                    Text(Self.newSessionLabel)
                 }
             }
             .lineLimit(1)

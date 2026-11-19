@@ -169,14 +169,17 @@ final class ThreadsTests: XCTestCase {
         ]
         let rows = ThreadsPresentation(chats: chats, current: 5).rows(now: now)
         XCTAssertEqual(rows.map(\.chat), [3, 5, 6], "Needs you no longer sorts first")
-        XCTAssertEqual(rows.map(\.label), ["Main", "Thread 1", "Thread 2"])
+        // v0.28 (ZK1): the name leads the row; the number is its second line.
+        XCTAssertEqual(rows.map(\.label), ["Main", "Pricing review", "Onboarding copy"])
+        XCTAssertEqual(rows.map(\.number), [nil, "Thread 1", "Thread 2"])
         XCTAssertEqual(rows.map(\.slot), [0, 1, 2])
         XCTAssertEqual(rows.map(\.isOpen), [false, true, false])
         XCTAssertEqual(rows.map(\.isThread), [false, true, true])
         XCTAssertEqual(rows[2].title, "Onboarding copy")
         XCTAssertEqual(rows[2].status, .needsYou)
         XCTAssertEqual(rows[2].keyName, "Control-2")
-        XCTAssertEqual(rows[2].help, "Go to Thread 2 (Control-2)", "the tooltip spells the key; the row shows none")
+        XCTAssertEqual(
+            rows[2].help, "Onboarding copy · Thread 2 (Control-2)", "the tooltip: the whole name, the number and the key")
         XCTAssertEqual(rows[0].title, "Acme launch plan")
         XCTAssertEqual(rows[0].status, .lastReply(SessionTime.ago(lastReply, now: now)))
         XCTAssertEqual(rows[0].help, "Go to Main (Control-0)")
@@ -203,12 +206,13 @@ final class ThreadsTests: XCTestCase {
         let chats = [Self.main(4), Self.thread(5, slot: 1, title: "Notes app login flow"), Self.thread(6, slot: 2)]
 
         let inThread = ThreadsPresentation(chats: chats, current: 5).rows(now: now, calendar: calendar, locale: locale)
-        XCTAssertEqual(inThread.map(\.subtitle), ["Session 4 · Acme launch plan", "Notes app login flow", nil])
+        XCTAssertEqual(inThread.map(\.subtitle), ["Session 4 · Acme launch plan", "Thread 1", "Thread 2"])
+        XCTAssertEqual(inThread.map(\.label), ["Main", "Notes app login flow", "Review the pricing page on its own."])
 
         let inMain = ThreadsPresentation(chats: chats, current: 4).rows(now: now, calendar: calendar, locale: locale)
         XCTAssertEqual(inMain[0].label, "Main")
         XCTAssertEqual(inMain[0].subtitle, "Session 4 · started 12:00 PM")
-        XCTAssertEqual(inMain[1].subtitle, "Notes app login flow", "a thread's subtitle is its title, open or not")
+        XCTAssertEqual(inMain[1].subtitle, "Thread 1", "a thread's second line is its number, open or not")
 
         let bare = ThreadsPresentation(chats: [untitled], current: nil).rows(now: now, calendar: calendar, locale: locale)
         XCTAssertEqual(bare.map(\.subtitle), ["Session 4"], "no title yet: the number alone")
@@ -586,10 +590,10 @@ final class ThreadsTests: XCTestCase {
         XCTAssertEqual(cards.first?.thread, 6)
         XCTAssertEqual(cards.first?.slot, 2)
         XCTAssertEqual(cards.first?.cardId, "card-1")
-        XCTAssertEqual(cards.first?.title, "Thread 2 has a question")
+        XCTAssertEqual(cards.first?.title, "Review the pricing page on its own. has a question", "v0.28: Main's card names the thread")
         XCTAssertEqual(cards.first?.line, "Which tone for step 2?")
-        XCTAssertEqual(cards.first?.goLabel, "Go to Thread 2")
-        XCTAssertEqual(cards.first?.goHelp, "Control-2")
+        XCTAssertEqual(cards.first?.goLabel, "Go to thread")
+        XCTAssertEqual(cards.first?.goHelp, "Thread 2 (Control-2)")
         XCTAssertEqual(model.callingCards(in: 5), [], "a thread never shows another's call")
         // Review Focus 4: never a transcript item in Main, never sent anywhere.
         XCTAssertFalse((model.transcripts[3] ?? []).contains { if case .card = $0 { true } else { false } })
@@ -617,7 +621,7 @@ final class ThreadsTests: XCTestCase {
             permission: Permission(tool: "Bash", summary: "Run npm test", input: [:]), questions: nil, form: nil,
             toolUseId: "toolu_b", seq: 2)))
         let cards = model.callingCards(in: 3)
-        XCTAssertEqual(cards.map(\.title), ["Thread 1 has a question"])
+        XCTAssertEqual(cards.map(\.title), ["Review the pricing page on its own. has a question"])
         XCTAssertEqual(cards.map(\.line), ["Run npm test"])
     }
 
@@ -658,7 +662,7 @@ final class ThreadsTests: XCTestCase {
         let rows = ThreadsPresentation(chats: chats, current: 3, newReplies: [5, 6]).rows(now: now).filter(\.isThread)
         XCTAssertEqual(rows.map(\.chat), [5, 6], "a new reply does not reorder the rows")
         XCTAssertEqual(rows[0].status, .newReply)
-        XCTAssertEqual(rows[0].spokenLabel, "Thread 1, new reply")
+        XCTAssertEqual(rows[0].spokenLabel, "Review the pricing page on its own., new reply")
         XCTAssertEqual(rows[1].status, .working, "working again: the spinner, not the dot")
         let waiting = ThreadsPresentation(chats: chats, current: 3, waiting: [5], newReplies: [5]).rows(now: now)
         XCTAssertEqual(waiting.first { $0.chat == 5 }?.status, .needsYou, "Needs you wins over a new reply")
@@ -670,9 +674,10 @@ final class ThreadsTests: XCTestCase {
         let count = sent.frames.count
         runTurn(model, chat: 5, reply: "The notes page is built.\nIt saves per email.")
 
+        let name = model.summary(of: 5).map(ThreadName.shown) ?? ""
         XCTAssertEqual(model.doneCards(in: 3), [DoneCard(
-            thread: 5, slot: 1, title: "Thread 1 is done", line: "The notes page is built.", goLabel: "Go to Thread 1",
-            goHelp: "Control-1")])
+            thread: 5, slot: 1, title: "\(name) is done", line: "The notes page is built.", goLabel: "Go to thread",
+            goHelp: "Thread 1 (Control-1)")])
         XCTAssertEqual(model.doneCards(in: 5), [], "only Main shows it")
         XCTAssertEqual(model.doneCards(in: 6), [])
         XCTAssertEqual(model.threads.rows(now: Date()).first { $0.chat == 5 }?.status, .newReply)
@@ -817,19 +822,20 @@ final class ThreadsTests: XCTestCase {
         XCTAssertEqual(rows[0].label, "Wren (Main)")
         XCTAssertEqual(rows[0].mainName, "Wren")
         XCTAssertEqual(rows[0].help, "Go to Wren (Main) (Control-0)")
-        XCTAssertEqual(rows[1].label, "Thread 1")
+        XCTAssertEqual(rows[1].label, "Review the pricing page on its own.")
+        XCTAssertEqual(rows[1].number, "Thread 1")
         XCTAssertNil(rows[1].mainName)
         XCTAssertEqual(presentation.rows(now: now, agentName: "Agent")[0].label, "Main")
         XCTAssertNil(presentation.rows(now: now)[0].mainName)
         XCTAssertEqual(
             ThreadMenuItem.items(threads: presentation, threadsOn: true, agentName: "Wren").map(\.title),
-            ["Wren (Main)", "Thread 1"])
+            ["Wren (Main)", "Review the pricing page on its own."])
     }
 
     @MainActor
     func testCardTitle() {
         XCTAssertEqual(SessionCard.title(summary: Self.main(4), threadsOn: true, agentName: "Wren"), "Wren (Main)")
         XCTAssertEqual(SessionCard.title(summary: Self.main(4), threadsOn: false, agentName: "Wren"), "Session 4")
-        XCTAssertEqual(SessionCard.title(summary: Self.thread(5, slot: 1), threadsOn: true, agentName: "Wren"), "Thread 1")
+        XCTAssertEqual(SessionCard.title(summary: Self.thread(5, slot: 1), threadsOn: true, agentName: "Wren"), "Review the pricing page on its own.")
     }
 }
