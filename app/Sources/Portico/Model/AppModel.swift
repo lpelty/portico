@@ -280,6 +280,10 @@ final class AppModel: ObservableObject {
     var teamGetPending: String?
     /// The share dialog, while it is open (v0.27, ZJ2).
     @Published var teamShare: TeamShareSession?
+    /// v0.28 (PORT-82): the share cards of conversations, by the draft's id, as the gateway last said.
+    @Published var teamShareCards: [String: TeamShareCard] = [:]
+    /// The working state of each card still a draft (the note, the check, the choices).
+    @Published var teamCardSessions: [String: TeamShareSession] = [:]
     /// Where the last arrival given a conversation line is kept; the tests give their own.
     var teamDefaults: UserDefaults = .standard
     /// Per chat, the attachment paths queued in the input bar: the Files
@@ -1097,6 +1101,7 @@ final class AppModel: ObservableObject {
         for chat in Array(pendingSends.keys) { pendingSends[chat]?.afterOpen = false }
         hello = incoming
         teamReconnected()
+        teamCardsReconnected()
         // A `chat.remove` out on the lost connection is unconfirmed: its images stay.
         pendingRemovals = [:]
         extraRoots = []
@@ -1392,16 +1397,21 @@ final class AppModel: ObservableObject {
             teamStateArrived(state)
 
         case .teamResult(let result):
-            if !teamShareResultArrived(result) { teamResultArrived(result) }
+            if !teamShareResultArrived(result), !teamCardResultArrived(result) { teamResultArrived(result) }
 
         case .teamShareDraft(let draft):
             teamShareDraftArrived(draft)
+            teamCardDraftArrived(draft)
+
+        case .teamShareCard(let card):
+            teamShareCardArrived(card)
 
         case .error(let error):
             // A refused `chat.remove` keeps the chat's images (v0.19 §8.2).
             if let id = error.id { pendingRemovals[id] = nil }
             lastError = error
             teamShareErrorArrived(error)
+            teamCardErrorArrived(error)
             applySpaceError(error)
             applyAppRefusal(error)
             applyMcpError(error)
@@ -1882,7 +1892,7 @@ final class AppModel: ObservableObject {
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .filesRoots, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
             .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal, .appCallResult, .mcpServers,
-            .pluginsState, .pluginsDetails, .pluginsOptions, .deploymentMessage, .signinWait, .teamState, .teamResult, .teamShareDraft:
+            .pluginsState, .pluginsDetails, .pluginsOptions, .deploymentMessage, .signinWait, .teamState, .teamResult, .teamShareDraft, .teamShareCard:
             break
         }
     }
@@ -1911,6 +1921,8 @@ final class AppModel: ObservableObject {
     /// "Started N agents" row stands for (v0.10 decision 1).
     func isDrawn(_ item: TranscriptItem, in chat: Int) -> Bool {
         guard TurnMarkerView.isDrawn(item) else { return false }
+        // v0.28: Cancel removes a share card, and its tool row with it.
+        if case .tool(let row) = item, isCancelledShare(toolUse: row.toolUseId) { return false }
         if case .tool(let row) = item, let activity = agentActivity[chat] {
             return !activity.startingToolUses.contains(row.toolUseId)
         }

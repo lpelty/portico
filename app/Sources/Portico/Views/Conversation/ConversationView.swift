@@ -215,6 +215,15 @@ struct ConversationView: View {
                 // estimated (about 200 pt), then laid out again, every frame, and
                 // the app froze; nothing small at the end is ever estimated now.
                 VStack(alignment: .leading, spacing: 0) {
+                    // v0.28: a share card the gateway could not tie to a tool row is still
+                    // shown, after the rows, so the person can always share or cancel it.
+                    ForEach(model.unanchoredShareCards(in: chat), id: \.share) { card in
+                        TeamShareCardView(card: card)
+                            .atReplyWidth()
+                            .padding(.top, TranscriptSpacing.itemGap)
+                            .id("share:\(card.share)")
+                            .modifier(ReportsRowFrame(rows: rows, id: "share:\(card.share)", isRow: false))
+                    }
                     // A thread calling you (AM1): Main only, after the last
                     // item, drawn by the app and never part of the transcript.
                     ForEach(calling) { card in
@@ -608,8 +617,9 @@ struct ConversationView: View {
     /// never falls inside a run of tool rows).
     private func drawn(from: Int) -> [TranscriptEntry] {
         TranscriptEntry.entries(items[from...].filter { model.isDrawn($0, in: chat) }) { row in
-            // A proposal's card and an app's page stand apart; they split a run.
+            // A proposal's card, a share's card and an app's page stand apart; they split a run.
             model.proposal(forToolUse: row.toolUseId) != nil || model.app(forToolUse: row.toolUseId) != nil
+                || model.shareCard(forToolUse: row.toolUseId) != nil
         }
     }
 
@@ -623,6 +633,7 @@ struct ConversationView: View {
     private func standsApart(_ entry: TranscriptEntry) -> Bool {
         guard case .item(.tool(let row)) = entry else { return false }
         return model.proposal(forToolUse: row.toolUseId) != nil || QuestionRecord.isRecord(row)
+            || model.shareCard(forToolUse: row.toolUseId) != nil
     }
 
     /// To the bottom, and twice: once now, once after the rows are laid out.
@@ -830,6 +841,9 @@ struct TranscriptItemView: View {
                 if let proposal = model.proposal(forToolUse: row.toolUseId) {
                     // Main's `open_thread` row is its proposal's card (AM2, AM4).
                     ProposalCard(proposal: proposal)
+                } else if let card = model.shareCard(forToolUse: row.toolUseId) {
+                    // v0.28 (ZJ7): the agent's `share_with_team` row is its share's card.
+                    TeamShareCardView(card: card)
                 } else if let app = model.app(forToolUse: row.toolUseId), let chat {
                     // v0.18 §2.3: an MCP app's page takes the row's place.
                     AppCard(state: app, chat: chat)

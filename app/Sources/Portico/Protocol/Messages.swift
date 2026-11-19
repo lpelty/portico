@@ -2822,6 +2822,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case teamState(TeamState)
     case teamResult(TeamResult)
     case teamShareDraft(TeamShareDraft)
+    case teamShareCard(TeamShareCard)
 
     var type: String {
         switch self {
@@ -2879,6 +2880,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .teamState: TeamState.messageType
         case .teamResult: TeamResult.messageType
         case .teamShareDraft: TeamShareDraft.messageType
+        case .teamShareCard: TeamShareCard.messageType
         }
     }
 
@@ -2938,6 +2940,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .teamState(let m): m.envelope
         case .teamResult(let m): m.envelope
         case .teamShareDraft(let m): m.envelope
+        case .teamShareCard(let m): m.envelope
         }
     }
 
@@ -2998,6 +3001,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case TeamState.messageType: self = .teamState(try TeamState(from: decoder))
         case TeamResult.messageType: self = .teamResult(try TeamResult(from: decoder))
         case TeamShareDraft.messageType: self = .teamShareDraft(try TeamShareDraft(from: decoder))
+        case TeamShareCard.messageType: self = .teamShareCard(try TeamShareCard(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -3060,6 +3064,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .teamState(let m): try m.encode(to: encoder)
         case .teamResult(let m): try m.encode(to: encoder)
         case .teamShareDraft(let m): try m.encode(to: encoder)
+        case .teamShareCard(let m): try m.encode(to: encoder)
         }
     }
 }
