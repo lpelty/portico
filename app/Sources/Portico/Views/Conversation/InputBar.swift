@@ -94,10 +94,9 @@ struct InputBar: View {
             }
             composer
         }
-        .dropDestination(for: URL.self) { urls, _ in
-            let files = urls.filter { $0.isFileURL && !isDirectory($0) }.map(\.path)
-            guard !files.isEmpty else { return false }
-            model.attach(files, to: chat)
+        // v0.28 (PORT-79): the same drop as anywhere over the conversation, promised files included.
+        .onDrop(of: DroppedFiles.types, isTargeted: nil) { providers in
+            model.attachDropped(providers, to: chat)
             return true
         }
         .onAppear { editorFocused = true }

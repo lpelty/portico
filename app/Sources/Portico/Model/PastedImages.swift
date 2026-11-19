@@ -96,11 +96,11 @@ enum PastedImages {
     }
 
     /// `<name>.<ext>` in `folder`, or `<name>-2.<ext>`… when taken (two pastes in one millisecond).
-    private static func unique(_ name: String, ext: String, in folder: URL) -> URL {
-        var url = folder.appendingPathComponent("\(name).\(ext)")
+    static func unique(_ name: String, ext: String, in folder: URL) -> URL {
+        var url = folder.appendingPathComponent(ext.isEmpty ? name : "\(name).\(ext)")
         var counter = 2
         while FileManager.default.fileExists(atPath: url.path) {
-            url = folder.appendingPathComponent("\(name)-\(counter).\(ext)")
+            url = folder.appendingPathComponent(ext.isEmpty ? "\(name)-\(counter)" : "\(name)-\(counter).\(ext)")
             counter += 1
         }
         return url

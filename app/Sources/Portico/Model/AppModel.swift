@@ -2673,6 +2673,20 @@ final class AppModel: ObservableObject {
         draftAttachments[chat] = list
     }
 
+    /// A drop over the conversation or its message box (v0.28, PORT-79):
+    /// files on disk, and promised files once they have been written to the
+    /// pending folder, become the draft's attachments. The task is returned
+    /// for tests.
+    @discardableResult
+    func attachDropped(_ providers: [NSItemProvider], to chat: Int) -> Task<DroppedFiles.Result, Never> {
+        let folder = attachmentsHome.map(PastedImages.pendingFolder(home:))
+        return Task { [weak self] in
+            let result = await DroppedFiles.load(providers, promisedInto: folder)
+            if !result.paths.isEmpty { self?.attach(result.paths, to: chat) }
+            return result
+        }
+    }
+
     func detach(_ path: String, from chat: Int) {
         draftAttachments[chat] = (draftAttachments[chat] ?? []).filter { $0 != path }
     }
@@ -2711,6 +2725,7 @@ final class AppModel: ObservableObject {
             }
             return Task.detached(priority: .userInitiated) { try PastedImages.save(data, home: home, now: Date()) }
         }
+        intake.promiseFolder = { [weak self] in self?.attachmentsHome.map(PastedImages.pendingFolder(home:)) }
         return intake
     }
 

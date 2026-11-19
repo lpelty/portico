@@ -134,6 +134,12 @@ struct ConversationView: View {
                     .zIndex(1)
             }
         }
+        // v0.28 (PORT-79): a file dropped anywhere over the conversation is
+        // attached to its message box. An ended session has no box: no drop.
+        .onDrop(of: model.showsEarlierBar(chat: chat) ? [] : DroppedFiles.types, isTargeted: nil) { providers in
+            model.attachDropped(providers, to: chat)
+            return true
+        }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
             conversationHeight = $0
             if Diagnostics.isOn { recording.noteWindow(windowSize) }

@@ -15,6 +15,9 @@ final class ComposerIntake: NSObject {
     /// When set, pasted image data is saved by the task this returns (off the main thread) and
     /// attached once it has been written; `saveImage` is the synchronous way (tests).
     var saveImageTask: ((Data) -> Task<String, Error>)?
+    /// Where a promised file is written when it is dropped on the text (v0.28,
+    /// PORT-79): the pending folder. Unset, or `nil`: a promise is not taken.
+    var promiseFolder: (() -> URL?)?
     /// Where ⌘V reads: the general pasteboard, or one a test hands in.
     let pasteboard: NSPasteboard
 
@@ -34,9 +37,14 @@ final class ComposerIntake: NSObject {
     /// pasteboard's types alone: no data is read and no file looked at
     /// (it is asked on every mouse move). `performDragOperation` reads.
     nonisolated static func offers(types: [NSPasteboard.PasteboardType]) -> Bool {
-        if types.contains(.fileURL) { return true }
+        if types.contains(.fileURL) || types.contains(where: promiseTypes.contains) { return true }
         return !types.contains(.string) && types.contains(where: imageTypes.contains)
     }
+
+    /// What a drag carries in place of a file that does not exist yet (out of
+    /// Mail, Outlook, Photos, a browser's downloads): a promise of one.
+    nonisolated static let promiseTypes: [NSPasteboard.PasteboardType] =
+        NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
 
     /// What a pasteboard holds, as the composer reads it.
     enum Contents: Equatable {
@@ -88,8 +96,26 @@ final class ComposerIntake: NSObject {
             attach([path])
             return true
         case .text:
-            return false
+            return dropping && receivePromises(from: pasteboard)
         }
+    }
+
+    /// Ask each promised file to be written into the pending folder and
+    /// attach it when it is there. `false` when the drop promises nothing,
+    /// or there is nowhere to keep it.
+    private func receivePromises(from pasteboard: NSPasteboard) -> Bool {
+        guard let receivers = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver],
+            !receivers.isEmpty, let folder = promiseFolder?()
+        else { return false }
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for receiver in receivers {
+            receiver.receivePromisedFiles(atDestination: folder, options: [:], operationQueue: .main) { [weak self] url, error in
+                guard error == nil else { return }
+                let path = url.path
+                MainActor.assumeIsolated { self?.attach([path]) }
+            }
+        }
+        return true
     }
 
 
@@ -153,7 +179,7 @@ enum ComposerTextViewHook {
         return true
     }
 
-    static let extraDragTypes: [NSPasteboard.PasteboardType] = [.fileURL] + ComposerIntake.imageTypes
+    static let extraDragTypes: [NSPasteboard.PasteboardType] = [.fileURL] + ComposerIntake.imageTypes + ComposerIntake.promiseTypes
 
     /// The instance's class under any Key-Value Observing subclass.
     private static func baseClass(of object: AnyObject) -> AnyClass {

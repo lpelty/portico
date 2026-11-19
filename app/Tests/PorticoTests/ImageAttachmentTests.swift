@@ -411,6 +411,11 @@ final class ImageAttachmentTests: XCTestCase {
 
         XCTAssertFalse(ComposerIntake.offers(types: [.string, .png]), "text with a picture of it stays text")
         XCTAssertFalse(ComposerIntake.offers(types: [.string]))
+        // v0.28 (PORT-79): a promised file, with or without a name beside it as text.
+        XCTAssertFalse(ComposerIntake.promiseTypes.isEmpty)
+        XCTAssertTrue(ComposerIntake.offers(types: [ComposerIntake.promiseTypes[0]]))
+        XCTAssertTrue(ComposerIntake.offers(types: [.string, ComposerIntake.promiseTypes[0]]))
+        XCTAssertTrue(ComposerTextViewHook.extraDragTypes.contains(ComposerIntake.promiseTypes[0]))
     }
 
     /// A subclass of a hooked class is covered by its parent's replacements, not hooked again.
