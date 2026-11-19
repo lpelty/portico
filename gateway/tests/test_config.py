@@ -191,7 +191,8 @@ def test_hello_carries_brand_actions_roots_and_protocol_1() -> None:
         "cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1",
         "models.v1", "mcp.v1", "plugins.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", "tasks.v1", "messages.deployment.v1",
         "history.times.v1", "signin.v1",
-        "sessions.clear", "threads.v1", "apps.v1",
+        # v0.28: ``threads.new.v1`` with threads, ``chat.retitle.v1`` with generated titles (the default).
+        "sessions.clear", "threads.v1", "threads.new.v1", "chat.retitle.v1", "apps.v1",
     ]
     assert hello.presentation == "single"
     assert hello.can_log is False

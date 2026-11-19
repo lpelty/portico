@@ -230,6 +230,7 @@ from .messages import (
     CardAnswered,
     CardAsk,
     ChatAlias,
+    ChatRetitle,
     ChatCommands,
     ChatCompacted,
     ChatHistory,
@@ -325,6 +326,7 @@ from .messages import (
     StatusSet,
     TextDelta,
     ThreadClose,
+    ThreadDiscard,
     ThreadDismiss,
     ThreadInfo,
     ThreadProposal,
@@ -353,6 +355,8 @@ from .threads import (
     MAIN_PROMPT,
     BRIEF_NOT_SENT,
     RENEW_MESSAGE,
+    NO_NAME_MESSAGE,
+    USED_MESSAGE,
     not_a_file,
     proposed_text,
     thread_label,
@@ -724,6 +728,9 @@ class TurnRun:
     title_message: str | None = None
     first_line_title: str | None = None
     reply: str = ""
+    # v0.28: what the person sent for this turn, whichever turn it is: with
+    # ``reply``, what "Name it for me" (``chat.retitle``) writes a name from.
+    message: str | None = None
     # v0.26 (review L2): when the turn began, as epoch seconds (``_begin_turn``): a
     # sign-in wait after it fails counts a token written from then on.
     started_epoch: float | None = None
@@ -1274,6 +1281,8 @@ class GatewayServer:
         self.register("thread.start", self.on_thread_start)
         self.register("thread.dismiss", self.on_thread_dismiss)
         self.register("thread.close", self.on_thread_close)
+        self.register("thread.discard", self.on_thread_discard)
+        self.register("chat.retitle", self.on_chat_retitle)
         # v0.18 §3.1: MCP servers in Settings (``mcp.v1``). ``tool_policy`` is the person's
         # per-tool choice (ruling 10), read by ``ask_permission`` and by MCP Apps' calls.
         self.tool_policy = ToolPolicy.load(state)
@@ -1949,7 +1958,7 @@ class GatewayServer:
         prompt = chosen.prompt
         callbacks = ChatCallbacks(self, chat)
         if chat.thread is not None:
-            prompt = append_prompt_line(prompt, thread_prompt(chat.thread.slot))
+            prompt = append_prompt_line(prompt, thread_prompt(chat.thread.slot, chat.thread.brief))
         elif self.threads_on():
             prompt = append_prompt_line(prompt, MAIN_PROMPT)
             callbacks = MainChatCallbacks(self, chat)
@@ -2306,7 +2315,7 @@ class GatewayServer:
                     run.collector.note_tool(event.tool, event.input)
                 elif isinstance(event, TextDelta):
                     run.collector.note_text(event.text)
-                    if run.title_message is not None and len(run.reply) < REPLY_CHARS:
+                    if (run.title_message is not None or run.message is not None) and len(run.reply) < REPLY_CHARS:
                         run.reply = (run.reply + event.text)[:REPLY_CHARS]
             elif isinstance(event, ToolStarted) and from_tool(event.tool, event.input) is not None:
                 # No turn to collect it: reported when the write is done.
@@ -2344,6 +2353,10 @@ class GatewayServer:
         # Its own task: the engine is asked from inside its own event stream.
         if chat.engine is not None:
             self._spawn(self._report_context(chat, chat.engine), name=f"portico-context-{chat.number}")
+        if run.outcome == "done" and run.message is not None:
+            # v0.28: the newest finished exchange, and the first one of this launch.
+            first = chat.name_basis[0] if chat.name_basis else run.message
+            chat.name_basis = (first, run.message, run.reply)
         if run.outcome == "done" and run.title_message is not None and self.wants_title(chat):
             # Its own task too: a title never holds up or fails a turn.
             self._spawn(self._title_task(chat, run), name=f"portico-title-{chat.number}")
@@ -2599,6 +2612,37 @@ class GatewayServer:
             return
         chat.title = title
         log.info("chat %d: titled %r", chat.number, title)
+        self.registry.persist()
+        await self.send_chat_list()
+
+    async def on_chat_retitle(self, msg: ChatRetitle, conn: ServerConnection) -> None:
+        """v0.28, "Name it for me": write ``chat``'s name again from its conversation so far.
+
+        From the first message of this launch, the newest one and the newest
+        reply; allowed while a turn runs (it reads what has finished). The
+        new name replaces the title and clears a typed alias. When no name
+        can be written the name stays and the answer is ``titles.unavailable``.
+        """
+        chat = self.registry.get(msg.chat)
+        if self.config.titles != "generated" or self.titler is None or chat.name_basis is None:
+            raise ProtocolError("titles.unavailable", NO_NAME_MESSAGE)
+        self._spawn(self._retitle_task(chat, msg, conn), name=f"portico-retitle-{chat.number}")
+
+    async def _retitle_task(self, chat: Chat, msg: ChatRetitle, conn: ServerConnection) -> None:
+        assert self.titler is not None and chat.name_basis is not None
+        first, latest, reply = chat.name_basis
+        said = first if latest == first else f"{first}\n\n(later)\n\n{latest}"
+        try:
+            title = await generate_title(self.titler, said, reply, self.config.title_model, self.title_timeout, chat.folder)
+        except Exception:
+            log.exception("chat %d: writing a name failed", chat.number)
+            title = None
+        if title is None or chat.number not in self.registry:
+            await self._send(conn, self.error("titles.unavailable", NO_NAME_MESSAGE, chat=chat.number, id=msg.id))
+            return
+        chat.title = title
+        chat.alias = None
+        log.info("chat %d: named again %r", chat.number, title)
         self.registry.persist()
         await self.send_chat_list()
 
@@ -3746,15 +3790,23 @@ class GatewayServer:
         if not self.threads_on():
             raise ProtocolError("threads.off", "this deployment has threads off")
         main = self.registry.get(msg.chat)
-        record = self._pending_proposal(main, msg.proposal)
+        record: ProposalRecord | None = None
+        if msg.proposal is not None:
+            record = self._pending_proposal(main, msg.proposal)
+        elif main.thread is not None or main.ended is not None:
+            # v0.28: the person's own thread opens beside Main, whichever chat they are looking at.
+            raise ProtocolError("thread.not_main", f"chat {main.number} is not the main conversation")
         if self.registry.free_slot(self.config.threads.max) is None:
             if msg.close is None:
                 raise ProtocolError("thread.limit", limit_message(self.config.threads.max))
             self._open_thread(msg.close)
-        self._starting.add(record.id)
+        if record is not None:
+            self._starting.add(record.id)
         self._spawn(self._start_task(main, record, msg, conn), name=f"portico-thread-start-{main.number}")
 
-    async def _start_task(self, main: Chat, record: ProposalRecord, msg: ThreadStart, conn: ServerConnection) -> None:
+    async def _start_task(
+        self, main: Chat, record: ProposalRecord | None, msg: ThreadStart, conn: ServerConnection
+    ) -> None:
         try:
             async with self._thread_lock:
                 slot = self.registry.free_slot(self.config.threads.max)
@@ -3773,8 +3825,10 @@ class GatewayServer:
                         raise ProtocolError("thread.limit", limit_message(self.config.threads.max))
                 # Main's New may have landed meanwhile (the lock, a close's log step): its
                 # pending proposals were dismissed then, and nothing starts from them now.
-                if record.state != "pending" or main.ended is not None:
+                if record is not None and (record.state != "pending" or main.ended is not None):
                     raise ProtocolError("thread.proposal_resolved", f"thread proposal {record.id} was already {record.state}")
+                if record is None and main.ended is not None:
+                    raise ProtocolError("thread.not_main", f"chat {main.number} is not the main conversation")
                 thread = await self._create_thread(main, record, slot, msg.id, conn)
         except ProtocolError as e:
             await self._send(conn, self.error(e.code, e.message, chat=main.number, id=msg.id))
@@ -3784,7 +3838,11 @@ class GatewayServer:
             await self._send(conn, self.error("gateway.error", f"thread.start failed: {e}", chat=main.number, id=msg.id))
             return
         finally:
-            self._starting.discard(record.id)
+            if record is not None:
+                self._starting.discard(record.id)
+        if record is None:
+            # v0.28: opened by the person. Nothing is sent: the thread waits for their first message.
+            return
         # The request is answered (``chat.state`` carried its id): a brief that cannot go
         # (a file gone since the proposal) is said in the thread, not as a second answer.
         send = MessageSend(ts=_now(), chat=thread.number, text=record.brief, attachments=list(record.files))
@@ -3795,22 +3853,29 @@ class GatewayServer:
             await self.notice(thread, f"{BRIEF_NOT_SENT}: {e.message}")
 
     async def _create_thread(
-        self, main: Chat, record: ProposalRecord, slot: int, id: str | None, conn: ServerConnection
+        self, main: Chat, record: ProposalRecord | None, slot: int, id: str | None, conn: ServerConnection
     ) -> Chat:
-        """The thread chat in Main's folder and mode, with the next session number; answered, the proposal started."""
+        """The thread chat in Main's folder and mode, with the next session number; answered, the proposal started.
+
+        Without a ``record`` (v0.28) the person opened it: no brief, no files, no proposal to mark.
+        """
         info = ThreadInfo(
-            label=thread_label(slot), slot=slot, parent=main.number, brief=record.brief,
-            files=list(record.files), opened_at=_now(),
+            label=thread_label(slot), slot=slot, parent=main.number, brief=record.brief if record else "",
+            files=list(record.files) if record else [], opened_at=_now(),
         )
         thread = self.registry.create(main.folder, parent=main.number, number=await self._new_session_number(), thread=info)
         thread.mode = main.mode
         state = thread.set_state("idle")
         self.registry.persist()
-        log.info("chat %d: %s started as chat %d (%s)", main.number, info.label, thread.number, record.id)
+        log.info(
+            "chat %d: %s started as chat %d (%s)", main.number, info.label, thread.number,
+            record.id if record else "opened by the person",
+        )
         await self._send(conn, state.model_copy(update={"id": id}))
         await self.send_chat_list()
-        started = self.registry.resolve_proposal(record.id, "started", thread=thread.number)
-        await self.broadcast(self._proposal_frame(started))
+        if record is not None:
+            started = self.registry.resolve_proposal(record.id, "started", thread=thread.number)
+            await self.broadcast(self._proposal_frame(started))
         if self.registry.models:
             await self.broadcast(self._models_frame(thread))
         return thread
@@ -3821,6 +3886,25 @@ class GatewayServer:
         record = self._pending_proposal(main, msg.proposal)
         dismissed = self.registry.resolve_proposal(record.id, "dismissed")
         await self.broadcast(self._proposal_frame(dismissed, id=msg.id))
+
+    async def on_thread_discard(self, msg: ThreadDiscard, conn: ServerConnection) -> None:
+        """v0.28: take away an open thread nothing was sent to; no log step, nothing in History.
+
+        ``thread.used`` once something was sent (a title, a turn or an engine
+        session says so): that thread closes with ``thread.close``.
+        """
+        chat = self._open_thread(msg.chat)
+        if chat.sent_turn or chat.title is not None or chat.session_id is not None or self._busy(chat):
+            raise ProtocolError("thread.used", USED_MESSAGE)
+        await self._end_signin(chat)
+        await self.cards.cancel_all(chat, "thread discarded", self.emit)
+        await self._close_engine(chat)
+        self._queues.pop(chat.number, None)
+        self._edited.pop(chat.number, None)
+        self.registry.remove(chat.number)
+        self._engine_locks.pop(chat.number, None)
+        log.info("chat %d: %s discarded unused", chat.number, chat.thread.label if chat.thread else "thread")
+        await self.send_chat_list()
 
     async def on_thread_close(self, msg: ThreadClose, conn: ServerConnection) -> None:
         """Close the thread ``chat`` (``close_thread``), from a task; refusals answered with the ``id``."""
@@ -4117,6 +4201,8 @@ class GatewayServer:
         # (``for_app`` gives an app without ``messages.attachments.v1`` the full text).
         run = await self._echo_turn(chat, msg.text, via, attachments)
         chat.sent_turn = True
+        if msg.text.strip():
+            run.message = msg.text
         if first and msg.text.strip():
             # v0.8: this turn may name the session once it finishes cleanly.
             run.title_message = msg.text
@@ -4199,6 +4285,9 @@ class GatewayServer:
             self._put_back_edited(chat, edited or [])
         if title is not None and chat.title is None:
             chat.title = title
+            if chat.thread is not None:
+                # v0.28: a thread's row leads with its name, so the app hears it at once.
+                await self.send_chat_list()
             self.registry.persist()
 
     async def _reply(self, conn: ServerConnection | None, msg: ServerMessage | Error) -> None:

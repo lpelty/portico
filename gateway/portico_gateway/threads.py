@@ -23,6 +23,12 @@ THREAD_PROMPT = (
     "Work on it here; the person answers here."
 )
 
+# v0.28: a thread the person opened themselves has no brief.
+THREAD_PROMPT_PLAIN = (
+    "This is Thread {n}, a conversation the person opened beside their main one. It starts fresh: nothing "
+    "from the main conversation is here. The person says what it is for and answers here."
+)
+
 TOOL_DESCRIPTION = (
     "Propose a thread: another conversation with the person, alongside this one, for work they want done "
     "separately. Give a brief of one or two sentences and the files it should start with. Returns at once; "
@@ -51,6 +57,8 @@ def _open_count(limit: int) -> str:
 def limit_message(limit: int) -> str:
     """``thread.limit``'s message at ``[threads] max`` = ``limit``."""
     return f"{_open_count(limit)} open; close {'it' if limit == 1 else 'one'} to start another"
+USED_MESSAGE = "something was sent to this thread; close it with thread.close"
+NO_NAME_MESSAGE = "a name could not be written just now"
 RENEW_MESSAGE = "a thread closes rather than renews; close it with thread.close"
 
 
@@ -70,9 +78,9 @@ def thread_label(slot: int) -> str:
     return f"Thread {slot}"
 
 
-def thread_prompt(slot: int) -> str:
-    """``THREAD_PROMPT`` for the thread in ``slot``."""
-    return THREAD_PROMPT.format(n=slot)
+def thread_prompt(slot: int, brief: str = "brief") -> str:
+    """``THREAD_PROMPT`` for the thread in ``slot``; ``THREAD_PROMPT_PLAIN`` for one opened without a brief."""
+    return (THREAD_PROMPT if brief.strip() else THREAD_PROMPT_PLAIN).format(n=slot)
 
 
 def proposed_text(slot: int | None, limit: int = 2) -> str:

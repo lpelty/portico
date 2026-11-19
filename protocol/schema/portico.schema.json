@@ -2414,6 +2414,56 @@
       "title": "ChatRemove",
       "type": "object"
     },
+    "ChatRetitle": {
+      "additionalProperties": false,
+      "description": "v0.28 (``chat.retitle.v1``): write the session's name again from its conversation so far.\n\nThe new name replaces the title and clears an alias the person typed;\nanswered with ``chat.list``. ``titles.unavailable`` when no name can be\nwritten (titles are not generated here, nothing was said since this\nlaunch, or the call failed): the name stays as it was.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "chat.retitle",
+          "default": "chat.retitle",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts"
+      ],
+      "title": "ChatRetitle",
+      "type": "object"
+    },
     "ChatState": {
       "additionalProperties": false,
       "properties": {
@@ -2862,6 +2912,12 @@
         },
         {
           "$ref": "#/$defs/ThreadClose"
+        },
+        {
+          "$ref": "#/$defs/ThreadDiscard"
+        },
+        {
+          "$ref": "#/$defs/ChatRetitle"
         },
         {
           "$ref": "#/$defs/McpList"
@@ -9531,6 +9587,56 @@
       "title": "ThreadClose",
       "type": "object"
     },
+    "ThreadDiscard": {
+      "additionalProperties": false,
+      "description": "v0.28 (``threads.new.v1``): take away the open thread ``chat``, which nothing was sent to.\n\nIt leaves the list and its slot, with no log step and no entry in\nHistory; answered with ``chat.list``. ``thread.used`` when something was\nsent to it: that thread closes with ``thread.close``.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "thread.discard",
+          "default": "thread.discard",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts"
+      ],
+      "title": "ThreadDiscard",
+      "type": "object"
+    },
     "ThreadDismiss": {
       "additionalProperties": false,
       "description": "v0.16: \"Not now\" on a proposal on Main (``chat``); its record reads \"Not started\".",
@@ -9588,7 +9694,7 @@
     },
     "ThreadInfo": {
       "additionalProperties": false,
-      "description": "What makes a chat a thread (v0.16): opened from Main (``parent``) for ``brief``.\n\n``label`` is \"Thread 1\" or \"Thread 2\"; ``slot`` is its number, the key\nthat switches to it (a closed thread's slot is used again); ``files``\nare the paths it started with; ``opened_at`` when it was started.",
+      "description": "What makes a chat a thread (v0.16): opened from Main (``parent``) for ``brief``.\n\n``label`` is \"Thread 1\" or \"Thread 2\"; ``slot`` is its number, the key\nthat switches to it (a closed thread's slot is used again); ``files``\nare the paths it started with; ``opened_at`` when it was started.\n``brief`` is empty for a thread the person opened themselves (v0.28):\nnothing was sent to it, and it takes nothing from Main.",
       "properties": {
         "brief": {
           "title": "Brief",
@@ -9735,7 +9841,7 @@
     },
     "ThreadStart": {
       "additionalProperties": false,
-      "description": "v0.16: start the thread a proposal on Main (``chat``) describes (``threads.v1``).\n\n``close`` names an open thread to close first when two are open (the\nlimit card's Close and start). Starting does not change which chat is Main.",
+      "description": "v0.16: start the thread a proposal on Main (``chat``) describes (``threads.v1``).\n\n``close`` names an open thread to close first when two are open (the\nlimit card's Close and start). Starting does not change which chat is Main.\n\nv0.28 (``threads.new.v1``): without a ``proposal`` the person opens the\nthread themselves. It starts empty: no brief, no first message, nothing\nof Main's conversation.",
       "properties": {
         "chat": {
           "title": "Chat",
@@ -9766,8 +9872,16 @@
           "title": "Id"
         },
         "proposal": {
-          "title": "Proposal",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Proposal"
         },
         "seq": {
           "anyOf": [
@@ -9794,8 +9908,7 @@
       },
       "required": [
         "chat",
-        "ts",
-        "proposal"
+        "ts"
       ],
       "title": "ThreadStart",
       "type": "object"

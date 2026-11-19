@@ -17,7 +17,7 @@ from websockets.asyncio.client import ClientConnection
 from portico_gateway import __version__
 from portico_gateway.chats import ChatRegistry
 from portico_gateway.config import Config
-from portico_gateway.messages import ChatAlias, ChatList, MessageSend, SessionLog, SessionLogged, TurnFinished, dump
+from portico_gateway.messages import ChatAlias, ChatList, ChatRetitle, Error, MessageSend, SessionLog, SessionLogged, TurnFinished, dump
 from portico_gateway.server import GatewayServer
 from portico_gateway.state import ChatRecord, Index, StateDir
 from portico_gateway.titles import (
@@ -571,3 +571,63 @@ async def test_the_title_call_closes_the_query_when_it_fails(tmp_path: Path) -> 
     with pytest.raises(RuntimeError):
         await titler("prompt", "haiku", None)
     assert fake.closed, "closed at once, not left to the garbage collector"
+
+
+# --- v0.28: "Name it for me" (chat.retitle) -------------------------------------------
+
+
+def test_the_gateway_offers_retitle_when_titles_are_generated() -> None:
+    from portico_gateway.config import hello_for
+
+    assert "chat.retitle.v1" in hello_for(make_config(), "e", "0.28.0").capabilities
+    assert "chat.retitle.v1" not in hello_for(make_config(titles="first_line"), "e", "0.28.0").capabilities
+
+
+async def test_name_it_for_me_writes_a_fresh_name_and_clears_a_typed_one(
+    server: GatewayServer, titler: Titler, folder: Path, state_dir: StateDir
+) -> None:
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="Plan the interview codebook")))
+        await recv_until(conn, ChatList)  # the first title
+        chat = server.registry.get(number)
+        await conn.send(dump(ChatAlias(ts=TS, chat=number, alias="My own name")))
+        await recv_until(conn, ChatList)
+        await send(conn, number, "Now turn it into a survey")
+        await settle()
+        assert chat.alias == "My own name" and len(titler.calls) == 1, "a typed name is never replaced by the app"
+
+        titler.answer = "Codebook and survey plan"
+        await conn.send(dump(ChatRetitle(ts=TS, id="req-n", chat=number)))
+        listing = (await recv_until(conn, ChatList))[-1]
+        assert isinstance(listing, ChatList)
+        assert [(c.title, c.alias) for c in listing.chats if c.chat == number] == [("Codebook and survey plan", None)]
+        prompt, _ = titler.calls[-1]
+        assert "Plan the interview codebook" in prompt and "Now turn it into a survey" in prompt
+        await settle()
+        assert len(titler.calls) == 2, "written once, on request"
+        assert {r.chat: r.title for r in state_dir.load_index().chats}[number] == "Codebook and survey plan"
+    finally:
+        await conn.close()
+
+
+async def test_name_it_for_me_leaves_the_name_when_none_can_be_written(
+    server: GatewayServer, titler: Titler, folder: Path
+) -> None:
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        await conn.send(dump(ChatRetitle(ts=TS, id="req-1", chat=number)))
+        err = await recv(conn)
+        assert isinstance(err, Error) and err.code == "titles.unavailable" and err.id == "req-1", "nothing said yet"
+
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="Plan the interview codebook")))
+        await recv_until(conn, ChatList)
+        titler.error = RuntimeError("no model")
+        await conn.send(dump(ChatRetitle(ts=TS, id="req-2", chat=number)))
+        err = (await recv_until(conn, Error))[-1]
+        assert isinstance(err, Error) and err.code == "titles.unavailable" and err.id == "req-2"
+        assert server.registry.get(number).title == "Interview codebook for Q3 synthesis"
+    finally:
+        await conn.close()

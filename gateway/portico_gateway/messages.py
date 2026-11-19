@@ -82,6 +82,15 @@ QUEUE_CAPABILITY = "queue.v1"
 # is sent ``thread.proposal``.
 THREADS_CAPABILITY = "threads.v1"
 
+# v0.28: the person opens a thread themselves (``thread.start`` with no
+# ``proposal``) and an unused one is taken away again (``thread.discard``).
+# A gateway lists it wherever it lists ``threads.v1``.
+THREADS_NEW_CAPABILITY = "threads.new.v1"
+
+# v0.28: ``chat.retitle`` writes a session's name again from its conversation
+# ("Name it for me"). A gateway lists it when ``titles = "generated"``.
+RETITLE_CAPABILITY = "chat.retitle.v1"
+
 # v0.18 (ruling 20): the capability, on both sides, for MCP Apps. A gateway
 # lists it when ``[apps] enabled``; only an app that lists it too is sent the
 # ``app.*`` frames (any other app keeps the plain tool rows).
@@ -161,6 +170,8 @@ class ThreadInfo(Strict):
     ``label`` is "Thread 1" or "Thread 2"; ``slot`` is its number, the key
     that switches to it (a closed thread's slot is used again); ``files``
     are the paths it started with; ``opened_at`` when it was started.
+    ``brief`` is empty for a thread the person opened themselves (v0.28):
+    nothing was sent to it, and it takes nothing from Main.
     """
 
     label: str
@@ -333,6 +344,19 @@ class ChatAlias(Envelope):
     alias: str | None = None
 
 
+class ChatRetitle(Envelope):
+    """v0.28 (``chat.retitle.v1``): write the session's name again from its conversation so far.
+
+    The new name replaces the title and clears an alias the person typed;
+    answered with ``chat.list``. ``titles.unavailable`` when no name can be
+    written (titles are not generated here, nothing was said since this
+    launch, or the call failed): the name stays as it was.
+    """
+
+    type: Literal["chat.retitle"] = "chat.retitle"
+    chat: int
+
+
 class ChatRemove(Envelope):
     type: Literal["chat.remove"] = "chat.remove"
     chat: int
@@ -385,12 +409,28 @@ class ThreadStart(Envelope):
 
     ``close`` names an open thread to close first when two are open (the
     limit card's Close and start). Starting does not change which chat is Main.
+
+    v0.28 (``threads.new.v1``): without a ``proposal`` the person opens the
+    thread themselves. It starts empty: no brief, no first message, nothing
+    of Main's conversation.
     """
 
     type: Literal["thread.start"] = "thread.start"
     chat: int
-    proposal: str
+    proposal: str | None = None
     close: int | None = None
+
+
+class ThreadDiscard(Envelope):
+    """v0.28 (``threads.new.v1``): take away the open thread ``chat``, which nothing was sent to.
+
+    It leaves the list and its slot, with no log step and no entry in
+    History; answered with ``chat.list``. ``thread.used`` when something was
+    sent to it: that thread closes with ``thread.close``.
+    """
+
+    type: Literal["thread.discard"] = "thread.discard"
+    chat: int
 
 
 class ThreadDismiss(Envelope):
@@ -1956,6 +1996,8 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     ThreadStart,
     ThreadDismiss,
     ThreadClose,
+    ThreadDiscard,
+    ChatRetitle,
     McpList,
     McpToggle,
     McpReconnect,
@@ -2176,6 +2218,8 @@ def example_messages() -> dict[str, BaseModel]:
         ThreadStart(ts=_TS, chat=14, id="req-12", proposal="p-7c21", close=15),
         ThreadDismiss(ts=_TS, chat=14, id="req-13", proposal="p-7c21"),
         ThreadClose(ts=_TS, chat=15, id="req-14"),
+        ThreadDiscard(ts=_TS, chat=16, id="req-15"),
+        ChatRetitle(ts=_TS, chat=15, id="req-16"),
         McpList(ts=_TS, id="req-20"),
         McpToggle(ts=_TS, id="req-21", name="acme-crm", enabled=False),
         McpReconnect(ts=_TS, id="req-22", name="docs"),

@@ -215,6 +215,10 @@ class Chat:
         # command's empty turn or a log step does not count. Not persisted: a
         # chat with a session comes back ``restored`` and is never titled.
         self.sent_turn = False
+        # v0.28: what a name is written from on request (``chat.retitle``): the
+        # first message of this launch, the newest one and the newest reply's
+        # start. Not persisted: after a restart it fills with the next turn.
+        self.name_basis: tuple[str, str, str] | None = None
 
     def __repr__(self) -> str:
         return f"Chat({self.number}, {str(self.folder)!r}, state={self.state!r}, seq={self.seq})"

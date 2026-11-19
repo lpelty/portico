@@ -188,6 +188,17 @@ chat goes `idle` → `working` as usual.
 `chat`, `alias: string | absent` (absent or empty clears it). Reply: an
 updated `chat.list`.
 
+### `chat.retitle` — `ChatRetitle` *(v0.28, `chat.retitle.v1`)*
+`chat`, `id`. "Name it for me": the gateway writes the session's name again
+from its conversation so far (the first message since the gateway started,
+the newest one and the start of the newest reply), sets it as `title` and
+clears `alias`; answered with `chat.list`. Allowed while a turn runs. The
+gateway lists `chat.retitle.v1` when `titles = "generated"`. Error:
+`titles.unavailable` ("a name could not be written just now": nothing has
+been said since the gateway started, or the call failed); the name stays.
+A name the app wrote is otherwise set once (the first turn) and a typed
+`alias` is never replaced.
+
 ### `chat.remove` — `ChatRemove`
 `chat`. Closes the engine, forgets the chat (its number is never reused),
 and replies with an updated `chat.list`.
@@ -549,7 +560,9 @@ an app that lists the same; v0.12: `spaces.v1` always (v0.14: with no
 `[spaces] folder` the folder is `<state dir>/spaces`), and `spaces.refresh` as well when `[spaces] refresh` is, so the app
 offers Refresh on a space; v0.15: `models.v1` always, for the model menu,
 see [Models](#models-v015); v0.16: `threads.v1` in single presentation with
-`[threads] max` above 0, see [Threads](#threads-v016); v0.18: `mcp.v1`
+`[threads] max` above 0, see [Threads](#threads-v016) (v0.28: `threads.new.v1`
+with it, so the person can open a thread, and `chat.retitle.v1` when
+`titles = "generated"`); v0.18: `mcp.v1`
 always, see [MCP servers](#mcp-servers-v018), `plugins.v1` always, see
 [Plugins](#plugins-v018), and `apps.v1` when `[apps] enabled` (the
 default), see [MCP Apps](#mcp-apps-v018); v0.19: `messages.attachments.v1`
@@ -1763,6 +1776,24 @@ ended meanwhile (New during the close), nothing starts and the answer is
 is in flight: a second Start makes no second thread), `thread.limit` ("two
 threads are open; close one to start another", or with `max = 1` "a thread
 is open; close it to start another": at the limit with no `close`), `thread.not_open` (`close` names no open thread).
+
+*v0.28 (`threads.new.v1`, listed wherever `threads.v1` is):* without a
+`proposal` the person opens the thread themselves. `chat` is still Main's
+(`thread.not_main` otherwise). The thread starts empty: its `thread.brief`
+is `""`, nothing is sent to it, no engine starts until the person's first
+message, and its agent's system prompt says it starts fresh with nothing
+from the main conversation. Answered with `chat.state idle` (with the
+`id`) and `chat.list`; no `thread.proposal`. The limit and `close` work as
+above. A thread's first message sets its `title` (the first line, then the
+generated one) and a `chat.list` follows at once, so the app can lead the
+row with the name.
+
+### `thread.discard` — `ThreadDiscard` *(app → gateway, v0.28, `threads.new.v1`)*
+`chat` (the thread), `id`. Takes away an open thread nothing was sent to:
+it leaves the list and its slot, no log step runs and nothing is written
+to History. Answered with `chat.list`. Errors: `thread.not_open`,
+`thread.used` (something was sent to it, or a turn is running: it closes
+with `thread.close`).
 
 ### `thread.dismiss` — `ThreadDismiss` *(app → gateway)*
 `chat` (Main's), `proposal`, `id`. "Not now": the proposal becomes

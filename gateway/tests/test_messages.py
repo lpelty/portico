@@ -94,7 +94,7 @@ EXPECTED_KEYS = {
     "server.thread.proposal",
     "client.thread.start",
     "client.thread.dismiss",
-    "client.thread.close",
+    "client.thread.close", "client.thread.discard", "client.chat.retitle",
     # v0.18: MCP servers in Settings
     "client.mcp.list",
     "client.mcp.toggle",
@@ -168,7 +168,8 @@ def test_every_type_has_schema_def_and_example():
     # v0.22's space.act, deployment.message
     # v0.25's signin.wait, signin.open, signin.stop, signin.code
     # v0.27's team.* (11 app → gateway, 3 gateway → app)
-    assert len(ex) == 122
+    # v0.28's thread.discard, chat.retitle
+    assert len(ex) == 124
     assert set(ex) == EXPECTED_KEYS
 
 
@@ -309,8 +310,15 @@ def test_v016_thread_frames_round_trip_with_their_wire_shape():
     assert dismiss.type == "thread.dismiss" and dismiss.proposal == "p1"
     close = parse_client(json.dumps({"type": "thread.close", "chat": 5, "id": "r2", "ts": TS}))
     assert close.type == "thread.close" and close.chat == 5
+    # v0.28: without a proposal the person opens the thread themselves.
+    own = parse_client(json.dumps({"type": "thread.start", "chat": 3, "ts": TS}))
+    assert own.type == "thread.start" and own.proposal is None
+    discard = parse_client(json.dumps({"type": "thread.discard", "chat": 5, "id": "r3", "ts": TS}))
+    assert discard.type == "thread.discard" and discard.chat == 5
+    retitle = parse_client(json.dumps({"type": "chat.retitle", "chat": 5, "id": "r4", "ts": TS}))
+    assert retitle.type == "chat.retitle" and retitle.chat == 5
     with pytest.raises(ProtocolError):
-        parse_client(json.dumps({"type": "thread.start", "chat": 3, "ts": TS}))
+        parse_client(json.dumps({"type": "thread.discard", "ts": TS}))
 
     pending = parse_server(
         json.dumps({"type": "thread.proposal", "chat": 3, "proposal": "p1", "brief": "Review the Acme pricing page", "state": "pending", "ts": TS})
