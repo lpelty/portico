@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.27.1 (2026-11-19)
+
+- **A web address the app opens itself shows as a page.** A service's
+  View, a remembered page put back after a restart and a link an MCP
+  app asks to open all drew "This kind of file can't be shown here."
+  The app labelled the address a file of an unknown kind; it now labels
+  it a page, as the gateway does for the agent's pages.
+
 ## v0.27.0 (2026-11-17)
 
 Team knowledge: a deployment may keep files a team shares. Portico shows

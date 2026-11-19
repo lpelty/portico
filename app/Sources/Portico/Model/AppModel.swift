@@ -3174,7 +3174,7 @@ extension AppModel {
         guard Self.isWebAddress(address), let url = URL(string: address) else { return false }
         let id = Self.localArtifactPrefix + url.absoluteString
         let artifact = Artifact(
-            id: id, kind: .url, location: url.absoluteString, media: .other,
+            id: id, kind: .url, location: url.absoluteString, media: .url,
             title: url.host ?? url.absoluteString, source: .tool, open: true)
         var list = artifacts[chat] ?? []
         list.removeAll { $0.id == id }
