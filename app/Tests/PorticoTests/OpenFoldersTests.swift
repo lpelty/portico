@@ -44,6 +44,26 @@ final class OpenFoldersTests: XCTestCase {
         return model
     }
 
+    /// v0.28: a top-level folder is open until the person folds it, by where
+    /// it is on disk, and it stays folded after a restart.
+    func testATopLevelFolderFoldsAndStaysFolded() {
+        let model = model()
+        XCTAssertFalse(model.isRootFolded(chat: 1, root: "Vault"))
+        model.toggleRoot(chat: 1, root: "Vault")
+        XCTAssertTrue(model.isRootFolded(chat: 1, root: "Vault"))
+        XCTAssertTrue(model.isRootFolded(chat: 2, root: "Vault"), "the vault is the same folder in every chat")
+        XCTAssertFalse(model.isRootFolded(chat: 1, root: "chat"))
+        model.toggleRoot(chat: 1, root: "chat")
+        XCTAssertTrue(model.isRootFolded(chat: 7, root: "chat"), "a later session in the same folder")
+        XCTAssertFalse(model.isRootFolded(chat: 2, root: "chat"), "another chat's own folder is another folder")
+
+        let second = self.model()
+        XCTAssertTrue(second.isRootFolded(chat: 1, root: "Vault"))
+        second.toggleRoot(chat: 1, root: "Vault")
+        XCTAssertFalse(second.isRootFolded(chat: 1, root: "Vault"))
+        XCTAssertFalse(self.model().isRootFolded(chat: 1, root: "Vault"))
+    }
+
     func testAFolderOpensAndCloses() {
         let model = model()
         XCTAssertFalse(model.isFolderOpen(chat: 1, root: "chat", path: "docs"))

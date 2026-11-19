@@ -297,6 +297,8 @@ final class AppModel: ObservableObject {
     /// written to the settings so it is the same after a restart and in a
     /// later session that shows the same folder.
     @Published var openFolders: [String] = []
+    /// The top-level folders folded in the Files tree, by absolute path (v0.28).
+    @Published var foldedRoots: [String] = []
     /// The folders this person added to the Files pane, as the gateway named them (v0.19 §4.2; `files.roots`).
     @Published private(set) var extraRoots: [Root] = []
     /// Whether each extra folder was a directory at the last look (`refreshExtraFolderChecks`).
@@ -654,6 +656,7 @@ final class AppModel: ObservableObject {
             var isDirectory: ObjCBool = false
             return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
         }
+        foldedRoots = settings.foldedRoots
         // A change to either viewer switch tells the gateway at once. The
         // publishers fire before the value lands, so send what they carry.
         viewerSwitchObserver = settings.$viewerAgentCanSee

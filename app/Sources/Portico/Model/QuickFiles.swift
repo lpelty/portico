@@ -171,6 +171,28 @@ extension AppModel {
         folderPath(chat: chat, root: root, path: path).map(openFolders.contains) ?? false
     }
 
+    /// Whether a top-level folder of the Files tree is folded (v0.28). It is
+    /// open unless the person folded it; like an open folder, it is folded by
+    /// where it is on disk, in every chat that shows it and after a restart.
+    func isRootFolded(chat: Int, root: String) -> Bool {
+        folderPath(chat: chat, root: root, path: "").map(foldedRoots.contains) ?? false
+    }
+
+    /// Fold a top-level folder of the Files tree, or unfold it, and remember it.
+    func toggleRoot(chat: Int, root: String) {
+        guard let key = folderPath(chat: chat, root: root, path: "") else { return }
+        if let index = foldedRoots.firstIndex(of: key) {
+            foldedRoots.remove(at: index)
+            // As with a folder opened again (v0.26.6): ask for its listing again.
+            for listed in fileTree.keys where listed.path.isEmpty && folderPath(chat: listed.chat, root: listed.root, path: "") == key {
+                listAgain(listed)
+            }
+        } else {
+            foldedRoots.append(key)
+        }
+        settings.foldedRoots = foldedRoots
+    }
+
     /// Open the folder in the Files tree, or close it, and remember it.
     func toggleFolder(chat: Int, root: String, path: String) {
         guard let key = folderPath(chat: chat, root: root, path: path) else { return }

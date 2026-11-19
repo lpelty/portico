@@ -100,6 +100,7 @@ final class Settings: ObservableObject {
         static let lastFolder = "lastFolder"
         static let pinnedFiles = "pinnedFiles"
         static let openFolders = "openFolders"
+        static let foldedRoots = "foldedRoots"
         static let extraFolders = "extraFolders"
         static let sidebarWidth = "sidebarWidth"
         static let readingWidth = "viewerWidth.reading"
@@ -212,6 +213,13 @@ final class Settings: ObservableObject {
         set { defaults.set(Array(newValue.suffix(Self.openFoldersLimit)), forKey: Key.openFolders) }
     }
     static let openFoldersLimit = 500
+
+    /// The top-level folders the person folded in the Files tree, by absolute
+    /// path (v0.28). A top-level folder is open unless it is listed here.
+    var foldedRoots: [String] {
+        get { defaults.stringArray(forKey: Key.foldedRoots) ?? [] }
+        set { defaults.set(Array(newValue.suffix(Self.openFoldersLimit)), forKey: Key.foldedRoots) }
+    }
 
     /// Folders the person added to the Files pane (Settings › General › Also
     /// show in Files, v0.19 §4.2), by absolute path, in the order added.
