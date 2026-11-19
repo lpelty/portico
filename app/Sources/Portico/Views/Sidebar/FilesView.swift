@@ -238,7 +238,8 @@ struct FileTree: View {
                     }
                     .foregroundStyle(Theme.text2)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    // v0.28: the name row folds its folder; the mark is a folder row's own.
+                    // v0.28: the name row folds its folder. A folder row's chevron, at the row's
+                    // trailing edge so the name stays where it was.
                     Image(systemName: folded ? "chevron.right" : "chevron.down")
                         .font(Theme.iconFont(9, weight: .semibold))
                         .foregroundStyle(Theme.text3)

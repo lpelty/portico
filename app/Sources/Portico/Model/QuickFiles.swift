@@ -179,14 +179,12 @@ extension AppModel {
     }
 
     /// Fold a top-level folder of the Files tree, or unfold it, and remember it.
+    /// Folding changes only what is drawn: the folder's listing is kept and
+    /// listed again after a write as before, so unfolding asks for nothing.
     func toggleRoot(chat: Int, root: String) {
         guard let key = folderPath(chat: chat, root: root, path: "") else { return }
         if let index = foldedRoots.firstIndex(of: key) {
             foldedRoots.remove(at: index)
-            // As with a folder opened again (v0.26.6): ask for its listing again.
-            for listed in fileTree.keys where listed.path.isEmpty && folderPath(chat: listed.chat, root: listed.root, path: "") == key {
-                listAgain(listed)
-            }
         } else {
             foldedRoots.append(key)
         }
