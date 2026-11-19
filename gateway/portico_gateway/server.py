@@ -143,6 +143,7 @@ wound down: nothing held goes on its own after a stop (Larry, 10-30).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import http
 import json
 import logging
@@ -307,6 +308,7 @@ from .messages import (
     TeamSendingSet,
     TeamSendNow,
     TeamShareCancel,
+    TeamShareCard,
     TeamShareDraft,
     TeamSharePrepare,
     TeamShareSend,
@@ -345,7 +347,7 @@ from .plugins import Plugins, RenewContext
 from .search import Runner, clean_hits, run_command, search_files
 from .services import ServiceMonitor, command_restart, command_status, hook_restart, hook_status
 from .session_numbers import NEXT_NUMBER_TIMEOUT, next_session_number
-from .state import PromptRecord, ProposalRecord, QuestionOutcome, StateDir
+from .state import PromptRecord, ProposalRecord, QuestionOutcome, ShareCardRecord, StateDir
 from .threads import (
     CLOSE_LOGGING,
     CLOSE_PLAIN,
@@ -355,6 +357,8 @@ from .threads import (
     MAIN_PROMPT,
     BRIEF_NOT_SENT,
     RENEW_MESSAGE,
+    SHARE_OFFERED,
+    SHARE_REFUSAL_PREFIX,
     NO_NAME_MESSAGE,
     USED_MESSAGE,
     not_a_file,
@@ -663,7 +667,7 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
             msg = msg.model_copy(
                 update={"services": [s.model_copy(update={"state": "down"}) if s.state == "stuck" else s for s in msg.services]}
             )
-    if isinstance(msg, (TeamState, TeamResult, TeamShareDraft)) and TEAM_CAPABILITY not in capabilities:
+    if isinstance(msg, (TeamState, TeamResult, TeamShareDraft, TeamShareCard)) and TEAM_CAPABILITY not in capabilities:
         return None
     if isinstance(msg, SpacesList) and SPACES_CAPABILITY not in capabilities:
         return None  # v0.12: an app that did not declare spaces.v1 cannot decode spaces.list
@@ -759,6 +763,31 @@ class ChatCallbacks:
 
     async def on_show(self, paths: list[str]) -> str | Shown | None:
         return await self.server.show_files(self.chat, paths)
+
+    # v0.28: ``share_with_team``. The tool's handler is not told its ``tool_use_id``; the
+    # ``PreToolUse`` hook hears it first with the call's input, as for ``open_thread``.
+    SHARE_USES_KEPT = 20
+
+    @property
+    def shares_with_team(self) -> bool:
+        """Whether this chat's agent gets ``share_with_team``: the deployment has team knowledge."""
+        return self.server.team.active
+
+    def note_share_use(self, tool_use_id: str, tool_input: dict[str, Any]) -> None:
+        uses: list[tuple[tuple[str, tuple[str, ...]], str]] = getattr(self, "_share_uses", [])
+        key = use_key(tool_input.get("note"), tool_input.get("files"))
+        self._share_uses = [*uses, (key, tool_use_id)][-self.SHARE_USES_KEPT :]
+
+    async def on_share_with_team(self, files: list[str], note: str) -> str:
+        uses: list[tuple[tuple[str, tuple[str, ...]], str]] = getattr(self, "_share_uses", [])
+        key = use_key(note, files)
+        use = None
+        for i, (noted, id) in enumerate(uses):
+            if noted == key:
+                use = id
+                del uses[i]
+                break
+        return await self.server.propose_share(self.chat, files, note, use)
 
     @property
     def viewer_bridge(self) -> ViewerBridge:
@@ -1384,6 +1413,8 @@ class GatewayServer:
             self._spawn(self._watch_updates(), name="portico-update-check")
         if self.services.active:
             self._spawn(self.services.run(), name="portico-services")
+        # v0.28: a share card still a draft belongs to a draft the last run held: it is cancelled.
+        self.registry.cancel_draft_share_cards()
         if self.team.active:
             self._spawn(self.team.run(), name="portico-team")
         if self.spaces_watcher is not None:
@@ -3314,6 +3345,9 @@ class GatewayServer:
         # v0.16: the proposals made in this chat, as they stand (only to an app with threads.v1).
         for record in self.registry.proposals_for(chat.number):
             await self._send(conn, self._proposal_frame(record))
+        # v0.28: this chat's share cards, as they stand (only to an app with team.v1).
+        for card in self.registry.share_cards_for(chat.number):
+            await self._send(conn, self._share_card_frame(card))
 
     async def _history(self, chat: Chat, since: int | None) -> tuple[list[ServerMessage], bool, list[Artifact]]:
         """What ``chat.open`` replays: ring events, or the transcript when the ring cannot serve.
@@ -4079,6 +4113,58 @@ class GatewayServer:
     async def on_team_share_cancel(self, msg: TeamShareCancel, conn: ServerConnection) -> None:
         if msg.id:
             await self._team_on().cancel(msg.id)
+            # v0.28: a card in a conversation is removed by Cancel; its record says so after a restart.
+            cancelled = self.registry.resolve_share_card(msg.id, "cancelled")
+            if cancelled is not None:
+                await self.broadcast(self._share_card_frame(cancelled))
+
+    # --- the share card in a conversation (v0.28) ----------------------------------
+
+    def _share_card_frame(self, record: ShareCardRecord) -> TeamShareCard:
+        return TeamShareCard(
+            ts=_now(), chat=record.chat, share=record.id, tool_use_id=record.tool_use_id, paths=list(record.paths),
+            note=record.note, state=record.state, at=record.at,  # type: ignore[arg-type]
+        )
+
+    def _team_path(self, path: Path) -> str:
+        """A file as the team kinds name it: inside the deployment's first root, relative to it; else absolute."""
+        if self.config.roots:
+            base = Path(self.config.roots[0].path).expanduser()
+            with contextlib.suppress(ValueError):
+                return path.resolve().relative_to(base.resolve()).as_posix()
+        return str(path)
+
+    async def propose_share(self, chat: Chat, files: list[str], note: str, tool_use_id: str | None) -> str:
+        """The agent's ``share_with_team``: start a draft for ``chat`` and send its card; returns what the agent reads.
+
+        A relative path is the chat's folder's. No files, a path that is not
+        a file, or a draft the deployment refuses is answered as a refusal
+        and nothing is kept. Nothing reaches the team source here: only the
+        person's Share (``team.share.send``) does.
+        """
+        if not self.team.active:
+            return f"{SHARE_REFUSAL_PREFIX}this deployment has no team knowledge."
+        if not files:
+            return f"{SHARE_REFUSAL_PREFIX}name the files to share."
+        paths: list[str] = []
+        for raw in files:
+            path = Path(raw).expanduser()
+            if not path.is_absolute():
+                path = chat.folder / path
+            if not path.is_file():
+                return f"{SHARE_REFUSAL_PREFIX}{raw} isn't a file."
+            paths.append(self._team_path(path))
+        id = f"s-{uuid.uuid4().hex[:8]}"
+        refused = await self.team.prepare(id, paths, note=note or None, chat=chat.number)
+        if refused is not None:
+            return f"{SHARE_REFUSAL_PREFIX}{refused.reason or 'the files cannot be shared now.'}"
+        record = ShareCardRecord(
+            id=id, chat=chat.number, tool_use_id=tool_use_id, paths=paths, note=note or None, created=_now(), state="draft"
+        )
+        self.registry.add_share_card(record)
+        log.info("chat %d: the agent offered a share of %d file(s) (%s)", chat.number, len(paths), id)
+        await self.broadcast(self._share_card_frame(record))
+        return SHARE_OFFERED
 
     async def on_team_request(
         self, msg: TeamGet | TeamSendNow | TeamSendingSet | TeamStop | TeamResolve | TeamShareSend, conn: ServerConnection
@@ -4109,6 +4195,14 @@ class GatewayServer:
                 result = await team.request(id, "resolve", {"path": msg.path, "conflict": msg.conflict, "use": msg.use})
             else:
                 result = await team.share(id, msg.rev, msg.note, msg.remove, bool(msg.unchecked))
+                if result.ok:
+                    # v0.28: a share started in a conversation: its card now reads Shared, for good.
+                    shared = self.registry.resolve_share_card(id, "shared", at=_now())
+                    if shared is not None:
+                        if msg.note is not None:
+                            shared.note = msg.note
+                            self.registry.persist()
+                        await self.broadcast(self._share_card_frame(shared))
         except asyncio.CancelledError:
             raise
         except Exception as e:

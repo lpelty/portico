@@ -64,7 +64,7 @@ from claude_agent_sdk import (
 from .artifacts import paths_in
 from .images import split_attachments, split_edited_note, user_message
 from .agents import AgentTracker
-from .threads import EMPTY_BRIEF, REFUSAL_PREFIX, TOOL_DESCRIPTION
+from .threads import EMPTY_BRIEF, REFUSAL_PREFIX, SHARE_REFUSAL_PREFIX, TOOL_DESCRIPTION
 from .comment_tools import COMMENT_TOOL_NAMES, build_comment_tools
 from .viewer import QUEUE_NOTE, STOPPED, VIEWER_TOOL_NAMES, build_viewer_tools
 from .messages import (
@@ -105,6 +105,9 @@ SHOW_TOOL_NAME = f"mcp__{SHOW_SERVER}__{SHOW_TOOL}"
 # v0.16: the in-process tool Main's agent proposes a thread with, on the same server.
 OPEN_THREAD_TOOL = "open_thread"
 OPEN_THREAD_TOOL_NAME = f"mcp__{SHOW_SERVER}__{OPEN_THREAD_TOOL}"
+# v0.28: the agent offers a share with the team (``build_share_tool``).
+SHARE_TOOL = "share_with_team"
+SHARE_TOOL_NAME = f"mcp__{SHOW_SERVER}__{SHARE_TOOL}"
 SHOWN_TEXT = "Shown in the viewer."
 # v0.17: the app did not say the page had loaded within the show's 10 s.
 STILL_LOADING_TEXT = "Shown; still loading."
@@ -160,7 +163,7 @@ _READ_ONLY_ENGINE_TOOLS: frozenset[str] = frozenset(
 # auto mode has nothing to decide for them either. (v0.23) The comment tools
 # only touch comment markup in .md files inside the session's folders.
 ALLOWED_OUTRIGHT_TOOLS: frozenset[str] = frozenset(
-    {SHOW_TOOL_NAME, OPEN_THREAD_TOOL_NAME, *VIEWER_TOOL_NAMES, *COMMENT_TOOL_NAMES}
+    {SHOW_TOOL_NAME, OPEN_THREAD_TOOL_NAME, SHARE_TOOL_NAME, *VIEWER_TOOL_NAMES, *COMMENT_TOOL_NAMES}
 )
 
 # What the permission row treats as "nothing to decide" (see server.py).
@@ -983,6 +986,61 @@ def build_mark_hook(bridge: Any, chat: int):
     return mark_hook
 
 
+SHARE_TOOL_DESCRIPTION = (
+    "Offer to share files with the person's team, when they asked for that in this conversation. Give the "
+    "files and a short note saying what they are for. It puts a card in the conversation; nothing is shared "
+    "unless the person presses Share on it. Returns at once."
+)
+
+
+def build_share_tool(callbacks: Any):
+    """The ``share_with_team`` tool (v0.28): the agent offers a share; only the person's Share sends anything.
+
+    Returns at once with what the owner answers; a refusal (no files, a
+    path that is not a file, a file already shared) is ``is_error``.
+    """
+
+    @tool(
+        SHARE_TOOL,
+        SHARE_TOOL_DESCRIPTION,
+        {
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "The files to share; a path may be relative to this session's folder.",
+                },
+                "note": {"type": "string", "description": "One or two sentences for the team: what the files are for."},
+            },
+            "required": ["files"],
+        },
+    )
+    async def share_with_team(args: dict[str, Any]) -> dict[str, Any]:
+        raw = args.get("files") or []
+        files = [f.strip() for f in raw if isinstance(f, str) and f.strip()] if isinstance(raw, list) else []
+        note = args.get("note")
+        text = await callbacks.on_share_with_team(files, note.strip() if isinstance(note, str) else "")
+        if text.startswith(SHARE_REFUSAL_PREFIX):
+            return {"content": [{"type": "text", "text": text}], "is_error": True}
+        return {"content": [{"type": "text", "text": text}]}
+
+    return share_with_team
+
+
+def build_share_hook(callbacks: Any):
+    """The ``PreToolUse`` hook on ``share_with_team``: the owner notes the call's id and input, which the card carries."""
+
+    async def share_hook(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
+        tool_input = input.get("tool_input") if isinstance(input, Mapping) else None
+        use_id = input.get("tool_use_id") if isinstance(input, Mapping) else None
+        if isinstance(tool_input, Mapping) and isinstance(use_id or tool_use_id, str):
+            callbacks.note_share_use(use_id or tool_use_id, dict(tool_input))
+        return {}
+
+    return share_hook
+
+
 def build_thread_tool(callbacks: Any):
     """The ``open_thread`` tool (v0.16): Main's agent proposes a thread; the person starts it or not.
 
@@ -1040,7 +1098,7 @@ def build_thread_hook(callbacks: Any):
 # (v0.16) for ``open_thread``, which only proposes.
 warnings.filterwarnings(
     "ignore",
-    message=rf"can_use_tool will not be invoked for: (?:(?:{'|'.join(re.escape(n) for n in (SHOW_TOOL_NAME, OPEN_THREAD_TOOL_NAME, *VIEWER_TOOL_NAMES, *COMMENT_TOOL_NAMES))})(?:, )?)+\.",
+    message=rf"can_use_tool will not be invoked for: (?:(?:{'|'.join(re.escape(n) for n in (SHOW_TOOL_NAME, OPEN_THREAD_TOOL_NAME, SHARE_TOOL_NAME, *VIEWER_TOOL_NAMES, *COMMENT_TOOL_NAMES))})(?:, )?)+\.",
     category=CanUseToolShadowedWarning,
 )
 
@@ -1124,6 +1182,11 @@ def build_options(
         tools.append(build_thread_tool(callbacks))
         allowed.append(OPEN_THREAD_TOOL_NAME)
         pre_tool_use.append(HookMatcher(matcher=OPEN_THREAD_TOOL_NAME, hooks=[build_thread_hook(callbacks)]))
+    if getattr(callbacks, "shares_with_team", False):
+        # v0.28: only where the deployment has team knowledge. It only offers; the person's Share sends.
+        tools.append(build_share_tool(callbacks))
+        allowed.append(SHARE_TOOL_NAME)
+        pre_tool_use.append(HookMatcher(matcher=SHARE_TOOL_NAME, hooks=[build_share_hook(callbacks)]))
     if tools:
         extra = {
             "mcp_servers": {SHOW_SERVER: create_sdk_mcp_server(SHOW_SERVER, tools=tools)},

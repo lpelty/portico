@@ -1433,6 +1433,34 @@ class TeamShareDraft(Envelope):
     findings: list[TeamFinding] = []
 
 
+TeamShareCardState = Literal["draft", "shared", "cancelled"]
+
+
+class TeamShareCard(Envelope):
+    """v0.28: a share the agent started in a conversation because the person asked there, and where it stands.
+
+    ``chat`` is that conversation; ``share`` the draft's id (the
+    ``team.share.draft`` with the same ``id`` carries the check, and
+    ``team.share.send`` / ``team.share.cancel`` answer by it);
+    ``tool_use_id`` the ``share_with_team`` tool row the card is drawn in
+    place of. ``state`` is ``draft`` until the person presses Share
+    (``shared``, with ``at``) or Cancel (``cancelled``). A state frame like
+    ``thread.proposal``: not in the ring, kept in the index, sent on every
+    change and after ``chat.live`` on every ``chat.open``, so the card reads
+    the same after a restart and after a file stops syncing. Only to an app
+    with ``team.v1``.
+    """
+
+    type: Literal["team.share.card"] = "team.share.card"
+    chat: int
+    share: str
+    tool_use_id: str | None = None
+    paths: list[str]
+    note: str | None = None
+    state: TeamShareCardState
+    at: str | None = None
+
+
 class TeamGet(Envelope):
     """Get and accept these shares, by the ids the person was shown."""
 
@@ -2078,6 +2106,7 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     DeploymentMessage,
     Models,
     ThreadProposal,
+    TeamShareCard,
     McpServers,
     PluginsState,
     PluginsDetails,
@@ -2723,6 +2752,16 @@ def example_messages() -> dict[str, BaseModel]:
             ],
         ),
         TeamResult(ts=_TS, id="req-50", ok=False, failed=[TeamFailure(share="share-8", reason="The file could not be downloaded.")]),
+        TeamShareCard(
+            ts=_TS,
+            chat=14,
+            share="s-41c07be2",
+            tool_use_id="toolu_01Share",
+            paths=["research/round-2/Research plan.md", "research/round-2/interview-guide.md"],
+            note="Round 2 plan and guide. The final index is waiting on your corpus list.",
+            state="shared",
+            at=_TS,
+        ),
         TeamShareDraft(
             ts=_TS,
             id="draft-9",

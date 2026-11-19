@@ -22,7 +22,11 @@ from portico_gateway import __version__
 from portico_gateway.chats import ChatRegistry
 from portico_gateway.config import ConfigError, TeamConfig, hello_for, load_config
 from portico_gateway.doctor import check_team
+from portico_gateway.engine import ALLOWED_OUTRIGHT_TOOLS, SHARE_TOOL_NAME, build_options
 from portico_gateway.messages import (
+    ChatOpen,
+    TeamShareCancel,
+    TeamShareCard,
     TEAM_CAPABILITY,
     ChatList,
     Error,
@@ -57,7 +61,8 @@ from portico_gateway.team import (
 )
 from tests.conftest import FakeEngine, make_config
 from tests.test_server import ws_url
-from tests.test_turns import recv, recv_until
+from portico_gateway.threads import SHARE_OFFERED, SHARE_REFUSAL_PREFIX
+from tests.test_turns import new_chat, recv, recv_until
 
 TS = "2026-11-17T12:00:00Z"
 PRIYA = {"name": "Priya Raman", "short": "Priya"}
@@ -1023,3 +1028,147 @@ async def test_without_team_knowledge_nothing_runs_and_requests_are_refused(stat
             await conn.close()
     finally:
         await srv.shutdown()
+
+
+# --- v0.28: the share card in a conversation (share_with_team, team.share.card) ----------
+
+
+async def offered_card(conn: ClientConnection) -> TeamShareCard:
+    card = (await recv_until(conn, TeamShareCard))[-1]
+    assert isinstance(card, TeamShareCard)
+    return card
+
+
+async def settled_draft(conn: ClientConnection, id: str) -> TeamShareDraft:
+    while True:
+        draft = (await recv_until(conn, TeamShareDraft))[-1]
+        assert isinstance(draft, TeamShareDraft)
+        if draft.id == id and not draft.checking:
+            return draft
+
+
+async def test_the_agent_offers_a_share_and_only_the_persons_share_sends_it(
+    team_server: GatewayServer, tmp_path: Path, state_dir: StateDir
+) -> None:
+    work = tmp_path / "work"
+    plan = work / "plan.md"
+    plan.write_text("# Plan\n\nWrite to me at someone@example.com.\n")
+    conn, _ = await attach_team(team_server)
+    try:
+        await checked_state(conn)
+        chat = await new_chat(conn, work)
+        callbacks = team_server.registry.get(chat).engine.callbacks  # type: ignore[union-attr]
+        assert callbacks.shares_with_team
+        callbacks.note_share_use("toolu_share", {"files": ["plan.md"], "note": "The plan for round 2."})
+        answer = await callbacks.on_share_with_team(["plan.md"], "The plan for round 2.")
+        assert answer == SHARE_OFFERED
+
+        card = await offered_card(conn)
+        assert (card.chat, card.tool_use_id, card.state, card.at) == (chat, "toolu_share", "draft", None)
+        assert card.paths == [str(plan.resolve())] and card.note == "The plan for round 2."
+        draft = await settled_draft(conn, card.share)
+        assert draft.chat == chat and draft.note == "The plan for round 2."
+        assert [f.location for f in draft.findings] == ["Paragraph 2"], "a finding shows on the card as in the dialog"
+        assert not (tmp_path / "team-source" / "files" / "plan.md").exists(), "nothing reaches the team before Share"
+
+        await conn.send(dump(TeamShareSend(ts=TS, id=card.share, rev=draft.rev, note="The plan, edited.", remove=[])))
+        frames = await recv_until(conn, TeamShareCard, timeout=20)
+        shared = frames[-1]
+        assert isinstance(shared, TeamShareCard) and shared.share == card.share
+        assert shared.state == "shared" and shared.at is not None and shared.note == "The plan, edited."
+        assert (tmp_path / "team-source" / "files" / "plan.md").exists()
+
+        # It reads the same when the conversation is opened again, and after a restart.
+        await conn.send(dump(ChatOpen(ts=TS, id="req-o", chat=chat)))
+        again = await offered_card(conn)
+        assert (again.share, again.state, again.at) == (shared.share, "shared", shared.at)
+        kept = state_dir.load_index().share_cards
+        assert [(r.id, r.state, r.at) for r in kept] == [(shared.share, "shared", shared.at)]
+    finally:
+        await conn.close()
+
+
+async def test_cancel_removes_the_card_and_nothing_is_shared(team_server: GatewayServer, tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    (work / "notes.md").write_text("# Notes\n")
+    conn, _ = await attach_team(team_server)
+    try:
+        await checked_state(conn)
+        chat = await new_chat(conn, work)
+        callbacks = team_server.registry.get(chat).engine.callbacks  # type: ignore[union-attr]
+        assert await callbacks.on_share_with_team(["notes.md"], "") == SHARE_OFFERED
+        card = await offered_card(conn)
+        assert card.tool_use_id is None and card.note is None
+        await conn.send(dump(TeamShareCancel(ts=TS, id=card.share)))
+        cancelled = await offered_card(conn)
+        assert (cancelled.share, cancelled.state) == (card.share, "cancelled")
+        assert not (tmp_path / "team-source" / "files" / "notes.md").exists()
+        await conn.send(dump(TeamShareCancel(ts=TS, id=card.share)))  # again: nothing more is said
+        await conn.send(dump(TeamCheck(ts=TS)))
+        frames = await recv_until(conn, TeamState)
+        assert not [f for f in frames if isinstance(f, TeamShareCard)]
+    finally:
+        await conn.close()
+
+
+async def test_a_share_the_agent_cannot_offer_is_refused_and_leaves_no_card(
+    team_server: GatewayServer, tmp_path: Path, state_dir: StateDir
+) -> None:
+    work = tmp_path / "work"
+    conn, _ = await attach_team(team_server)
+    try:
+        await checked_state(conn)
+        chat = await new_chat(conn, work)
+        callbacks = team_server.registry.get(chat).engine.callbacks  # type: ignore[union-attr]
+        assert await callbacks.on_share_with_team([], "A note") == f"{SHARE_REFUSAL_PREFIX}name the files to share."
+        assert await callbacks.on_share_with_team(["missing.md"], "") == f"{SHARE_REFUSAL_PREFIX}missing.md isn't a file."
+        assert state_dir.load_index().share_cards == []
+    finally:
+        await conn.close()
+
+
+async def test_a_draft_card_is_cancelled_by_a_restart_and_the_agent_has_no_tool_without_team_knowledge(
+    state_dir: StateDir, tmp_path: Path
+) -> None:
+    site = SampleSite(tmp_path)
+    (site.root / "notes.md").write_text("# Notes\n")
+    srv = await start(state_dir, team=site.commands)
+    try:
+        conn, _ = await attach_team(srv)
+        await checked_state(conn)
+        chat = await new_chat(conn, site.root)
+        callbacks = srv.registry.get(chat).engine.callbacks  # type: ignore[union-attr]
+        assert await callbacks.on_share_with_team(["notes.md"], "") == SHARE_OFFERED
+        await offered_card(conn)
+        await conn.close()
+    finally:
+        await srv.shutdown()
+
+    again = await start(state_dir, team=site.commands)
+    try:
+        assert [r.state for r in again.registry.share_cards_for(chat)] == ["cancelled"], "its draft went with the last run"
+    finally:
+        await again.shutdown()
+
+    plain = await start(state_dir)
+    try:
+        conn, _ = await attach_team(plain)
+        number = await new_chat(conn, site.root)
+        callbacks = plain.registry.get(number).engine.callbacks  # type: ignore[union-attr]
+        assert not callbacks.shares_with_team
+        options = build_options(site.root, None, [], callbacks)
+        assert SHARE_TOOL_NAME not in (options.allowed_tools or [])
+        await conn.close()
+    finally:
+        await plain.shutdown()
+
+
+def test_the_share_tool_is_offered_only_to_an_owner_that_shares(tmp_path: Path) -> None:
+    class Owner:
+        shares_with_team = True
+
+        async def on_event(self, event: object) -> None: ...
+
+    options = build_options(tmp_path, None, [], Owner())  # type: ignore[arg-type]
+    assert SHARE_TOOL_NAME in (options.allowed_tools or [])
+    assert SHARE_TOOL_NAME in ALLOWED_OUTRIGHT_TOOLS, "it only offers: no permission card"

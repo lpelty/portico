@@ -155,6 +155,23 @@ class ChatRecord(BaseModel):
     prompt: PromptRecord | None = None
 
 
+class ShareCardRecord(BaseModel):
+    """A share the agent started in a conversation (v0.28): the card's files, note and where it stands.
+
+    ``id`` is the draft's id; ``chat`` the conversation; ``tool_use_id`` the
+    ``share_with_team`` tool row. ``at`` is when it was shared.
+    """
+
+    id: str
+    chat: int
+    tool_use_id: str | None
+    paths: list[str]
+    note: str | None = None
+    created: str
+    state: str
+    at: str | None = None
+
+
 class ProposalRecord(BaseModel):
     """A thread Main's agent proposed (v0.16), kept until started, dismissed, or Main's session ends.
 
@@ -189,6 +206,8 @@ class Index(BaseModel):
     models: list[ModelChoice] = []
     # v0.16: thread proposals, oldest first (the newest ``PROPOSALS_KEPT``).
     proposals: list[ProposalRecord] = []
+    # v0.28: the share cards of conversations, oldest first (the newest ``SHARE_CARDS_KEPT``).
+    share_cards: list[ShareCardRecord] = []
 
 
 class CommandLists(BaseModel):

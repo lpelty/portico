@@ -6620,6 +6620,9 @@
           "$ref": "#/$defs/ThreadProposal"
         },
         {
+          "$ref": "#/$defs/TeamShareCard"
+        },
+        {
           "$ref": "#/$defs/McpServers"
         },
         {
@@ -8969,6 +8972,115 @@
         "ts"
       ],
       "title": "TeamShareCancel",
+      "type": "object"
+    },
+    "TeamShareCard": {
+      "additionalProperties": false,
+      "description": "v0.28: a share the agent started in a conversation because the person asked there, and where it stands.\n\n``chat`` is that conversation; ``share`` the draft's id (the\n``team.share.draft`` with the same ``id`` carries the check, and\n``team.share.send`` / ``team.share.cancel`` answer by it);\n``tool_use_id`` the ``share_with_team`` tool row the card is drawn in\nplace of. ``state`` is ``draft`` until the person presses Share\n(``shared``, with ``at``) or Cancel (``cancelled``). A state frame like\n``thread.proposal``: not in the ring, kept in the index, sent on every\nchange and after ``chat.live`` on every ``chat.open``, so the card reads\nthe same after a restart and after a file stops syncing. Only to an app\nwith ``team.v1``.",
+      "properties": {
+        "at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "At"
+        },
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "share": {
+          "title": "Share",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "draft",
+            "shared",
+            "cancelled"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "tool_use_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Use Id"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.share.card",
+          "default": "team.share.card",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "share",
+        "paths",
+        "state"
+      ],
+      "title": "TeamShareCard",
       "type": "object"
     },
     "TeamShareDraft": {

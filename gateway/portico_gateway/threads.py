@@ -57,6 +57,12 @@ def _open_count(limit: int) -> str:
 def limit_message(limit: int) -> str:
     """``thread.limit``'s message at ``[threads] max`` = ``limit``."""
     return f"{_open_count(limit)} open; close {'it' if limit == 1 else 'one'} to start another"
+# v0.28: what ``share_with_team`` answers (the tool marks a refusal ``is_error``).
+SHARE_REFUSAL_PREFIX = "Not offered: "
+SHARE_OFFERED = (
+    "Offered as a card in the conversation. Nothing is shared unless the person presses Share on it; "
+    "you won't be told which they chose."
+)
 USED_MESSAGE = "something was sent to this thread; close it with thread.close"
 NO_NAME_MESSAGE = "a name could not be written just now"
 RENEW_MESSAGE = "a thread closes rather than renews; close it with thread.close"

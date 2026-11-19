@@ -144,6 +144,7 @@ EXPECTED_KEYS = {
     "server.team.state",
     "server.team.result",
     "server.team.share.draft",
+    "server.team.share.card",
 }
 
 
@@ -168,8 +169,8 @@ def test_every_type_has_schema_def_and_example():
     # v0.22's space.act, deployment.message
     # v0.25's signin.wait, signin.open, signin.stop, signin.code
     # v0.27's team.* (11 app → gateway, 3 gateway → app)
-    # v0.28's thread.discard, chat.retitle
-    assert len(ex) == 124
+    # v0.28's thread.discard, chat.retitle, team.share.card
+    assert len(ex) == 125
     assert set(ex) == EXPECTED_KEYS
 
 

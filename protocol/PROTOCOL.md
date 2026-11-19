@@ -2507,6 +2507,25 @@ seen. `unchecked: true` shares after a `check_error`, without the check.
 ### `team.share.cancel` — `TeamShareCancel` *(app → gateway)*
 `id`: the draft was closed. Nothing is shared and no file was changed.
 
+### `team.share.card` — `TeamShareCard` *(v0.28)*
+`chat`, `share`, `tool_use_id?`, `paths`, `note?`,
+`state: draft | shared | cancelled`, `at?`. A share the agent started in
+a conversation because the person asked there. With team knowledge on,
+every chat's agent has the tool `share_with_team` (`files`, `note?`): it
+starts a draft (`team.share.draft` with `chat`, its `id` equal to
+`share`), stores this record and returns at once; a call with no files,
+a path that is not a file, or a draft the deployment refuses is answered
+"Not offered: …" and leaves nothing. Nothing reaches the team source
+until the person's `team.share.send` for `share`; then the record becomes
+`shared` with `at` (and the note the person sent). `team.share.cancel`
+makes it `cancelled`. `tool_use_id` is the tool row the app draws the
+card in place of. A state frame like `thread.proposal`: not in the ring,
+kept in the index, sent on every change and after `chat.live` on every
+`chat.open`, so a shared card reads the same after a restart and after a
+file stops syncing. A card still `draft` when the gateway starts becomes
+`cancelled`: its draft went with the last run. Only to an app with
+`team.v1`.
+
 ## Services *(v0.4)*
 
 Configuration notes for the reference gateway (not protocol messages).
