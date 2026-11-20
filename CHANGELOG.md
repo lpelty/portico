@@ -7,8 +7,8 @@ Threads, comments and a group of small things that had been waiting.
 - **A New thread row.** It opens an empty thread beside Main, with no
   proposal from the agent. A thread opened and never
   used is discarded.
-- **Threads are called by their name.** A thread shows its name wherever
-  it was "Thread 1" before, and the name can be changed in place.
+- **Threads are called by their name.** A thread is listed by its name,
+  and the name can be changed in place.
 - **Main and its threads can message each other.** One conversation can
   tell another that a file is taken, or hand something over when asked.
   A send waits for a yes on a card (`[threads] messages = "allow"` sends
