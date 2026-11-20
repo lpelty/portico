@@ -393,11 +393,17 @@ class ThreadsConfig(BaseModel):
     ``max`` is 0 to 2 (default 2); 0 turns threads off: Main's agent gets no
     ``open_thread`` tool and the gateway does not offer ``threads.v1``.
     Threads are single presentation only.
+
+    ``messages`` (v0.28): Main and its threads may message each other through
+    the engine's peer messaging. ``ask`` (default) puts every message to
+    another session behind the person's permission card; ``allow`` sends
+    without one.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     max: int = Field(2, ge=0, le=2)
+    messages: Literal["ask", "allow"] = "ask"
 
 
 class McpConfig(BaseModel):

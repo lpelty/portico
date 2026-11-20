@@ -9,6 +9,8 @@ here, fixed by the spec and the plan's rulings.
 
 from __future__ import annotations
 
+import re
+
 
 # Appended to Main's system prompt when threads are on.
 MAIN_PROMPT = (
@@ -99,3 +101,73 @@ def proposed_text(slot: int | None, limit: int = 2) -> str:
 def not_a_file(path: str) -> str:
     """The tool's refusal for a ``files`` entry that is not a file."""
     return f"{REFUSAL_PREFIX}{path} isn't a file."
+
+
+# --- v0.28 (PORT-38): Main and its threads message each other through the engine's own peer messaging ----
+
+# The ``chat.notice`` kind of a message that arrived from another conversation.
+PEER_NOTICE = "peer.message"
+# A peer's message is shown as one quiet line, at most this long.
+PEER_TEXT_LIMIT = 600
+PEER_SLUG_LIMIT = 24
+
+# Appended to Main's and each thread's system prompt, after its own line. ``{own}`` is this
+# conversation's peer name, ``{others}`` the other conversations with theirs (``peers_prompt``).
+PEERS_PROMPT = (
+    "Your peer name is {own}. The person's other conversations in this app: {others}. A thread can be "
+    "reached only while it is open. Message one with SendMessage only when your task overlaps its work, "
+    "you changed a file it is using, you found a pitfall it will hit, or the person asked you to hand "
+    "something over. Never send progress reports, and never pass a message for the person through another "
+    "conversation: the person reads each one themselves. The person may be asked before a message is sent."
+)
+
+
+def peer_slug(folder_name: str) -> str:
+    """A folder's name as the start of a peer name: lowercase letters, digits and dashes; ``portico`` when nothing is left."""
+    slug = re.sub(r"[^a-z0-9]+", "-", folder_name.lower()).strip("-")[:PEER_SLUG_LIMIT].strip("-")
+    return slug or "portico"
+
+
+def peer_name(folder_name: str, token: str, slot: int | None) -> str:
+    """The peer name of Main (``slot`` None) or the thread in ``slot``: ``<folder>-<token>-main``, ``…-thread-2``.
+
+    ``token`` is the gateway's own for this launch, so an engine left behind
+    by an earlier launch, or another gateway in the same folder, never has
+    the same name (two engines may hold one name; checked 2026-11-20).
+    """
+    tail = "main" if slot is None else f"thread-{slot}"
+    return f"{peer_slug(folder_name)}-{token}-{tail}"
+
+
+_PEER_NAME = re.compile(r"-[0-9a-f]{4}-(main|thread-([1-9]))\Z")
+
+
+def peer_label(name: str, folder_name: str) -> str:
+    """What the person reads for a peer name: "Main", "Thread 2", or the name itself for any other session.
+
+    The launch token is not compared: a transcript replayed after a restart
+    carries an earlier launch's names.
+    """
+    slug = peer_slug(folder_name)
+    if name.startswith(slug + "-"):
+        found = _PEER_NAME.fullmatch(name[len(slug) :])
+        if found:
+            return "Main" if found.group(1) == "main" else thread_label(int(found.group(2)))
+    return name
+
+
+def peers_prompt(folder_name: str, token: str, slot: int | None, limit: int) -> str:
+    """``PEERS_PROMPT`` for Main (``slot`` None) or the thread in ``slot``, with ``limit`` thread slots."""
+    others: list[str] = []
+    if slot is not None:
+        others.append(f"the main conversation is {peer_name(folder_name, token, None)}")
+    others += [f"{thread_label(n)} is {peer_name(folder_name, token, n)}" for n in range(1, limit + 1) if n != slot]
+    return PEERS_PROMPT.format(own=peer_name(folder_name, token, slot), others=", ".join(others))
+
+
+def peer_notice_text(label: str, body: str) -> str:
+    """The quiet line for a message from ``label``: its text on one line, cut at ``PEER_TEXT_LIMIT``."""
+    text = " ".join(body.split())
+    if len(text) > PEER_TEXT_LIMIT:
+        text = text[: PEER_TEXT_LIMIT - 1].rstrip() + "…"
+    return f"Message from {label}: {text}" if text else f"Message from {label}"

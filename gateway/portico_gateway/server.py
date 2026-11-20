@@ -355,6 +355,9 @@ from .threads import (
     EMPTY_BRIEF,
     limit_message,
     MAIN_PROMPT,
+    peer_label,
+    peer_name,
+    peers_prompt,
     BRIEF_NOT_SENT,
     RENEW_MESSAGE,
     SHARE_OFFERED,
@@ -746,6 +749,14 @@ class ChatCallbacks:
     def __init__(self, server: GatewayServer, chat: Chat) -> None:
         self.server = server
         self.chat = chat
+        # v0.28 (PORT-38): this chat's peer name while threads are on (``_start_engine`` sets it),
+        # and whether a message to another session asks first (``[threads] messages``).
+        self.peer_name: str | None = None
+        self.peer_send: str = server.config.threads.messages
+
+    def peer_label(self, name: str) -> str:
+        """A peer name as the person reads it: "Main", "Thread 2", or the name of another session."""
+        return peer_label(name, self.chat.folder.name)
 
     async def on_event(self, event: ServerMessage) -> None:
         await self.server.engine_event(self.chat, event)
@@ -1130,6 +1141,8 @@ class GatewayServer:
         self.engine_factory = engine_factory
         self.version = version
         self.epoch = str(uuid.uuid4())
+        # v0.28 (PORT-38): this launch's part of its engines' peer names.
+        self.peer_token = self.epoch[:4]
         self.token: str | None = None
         self.port = 0
         self._server: Server | None = None
@@ -1993,6 +2006,13 @@ class GatewayServer:
         elif self.threads_on():
             prompt = append_prompt_line(prompt, MAIN_PROMPT)
             callbacks = MainChatCallbacks(self, chat)
+        if self.threads_on():
+            # v0.28 (PORT-38): Main and its threads know each other's peer names and when to message.
+            slot = chat.thread.slot if chat.thread is not None else None
+            callbacks.peer_name = peer_name(chat.folder.name, self.peer_token, slot)
+            prompt = append_prompt_line(
+                prompt, peers_prompt(chat.folder.name, self.peer_token, slot, self.config.threads.max)
+            )
         engine.system_prompt = prompt
         # v0.15: every engine starts on the stored model.set choice (``None``: the deployment's default).
         engine.model = self.registry.model
@@ -3376,7 +3396,7 @@ class GatewayServer:
             return ring, truncated, []
         transcript = await asyncio.to_thread(self.history_reader, chat.session_id, chat.folder)
         times = await asyncio.to_thread(self.history_times_reader, chat.session_id, chat.folder) if transcript else {}
-        events = [self._replayed_permission(chat, e) for e in history_events(transcript, chat.number, times=times)]
+        events = [self._replayed_permission(chat, e) for e in history_events(transcript, chat.number, times=times, peer_label=lambda name: peer_label(name, chat.folder.name))]
         if not events:
             replayed = {e.artifact.id for e in ring if isinstance(e, ArtifactCreated)}
             return ring, truncated and since is not None, [a for a in chat.artifacts if a.id not in replayed]

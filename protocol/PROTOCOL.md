@@ -1038,6 +1038,9 @@ restart) gets the notices of the current gateway run put back in, after
 the turn each followed and without `seq`; only notices from before the
 restart are lost.
 
+v0.28: `kind: "peer.message"` is a message from another conversation, see
+[Messages between Main and its threads](#messages-between-main-and-its-threads-v028).
+
 v0.26: `kind: "signin.continued"` (text "Continued after sign-in") marks
 where a turn carried on after a sign-in wait (`signin.wait` `current`). The
 gateway emits it at the continue, so it is in the ring, and `chat.history`
@@ -1686,6 +1689,44 @@ When the gateway's `hello` and the app's both list `threads.v1`:
 - An older app ignores `thread` and sees threads as chats, and is never
   sent `thread.proposal`. An older gateway has no `threads.v1`, so the app
   shows no thread UI.
+
+### Messages between Main and its threads (v0.28)
+Main and its threads message each other through the engine's own peer
+messaging (its `ListAgents` and `SendMessage` tools), not through the
+gateway. Nothing is added to the protocol but one `chat.notice` kind.
+
+- **Names.** With threads on, every engine starts with a peer name
+  (`--name`): `<folder>-<token>-main` for Main, `<folder>-<token>-thread-<slot>`
+  for a thread. `<folder>` is the chat folder's name in lowercase letters,
+  digits and dashes (24 at most); `<token>` is four hex digits of the
+  gateway's launch, so an engine left by an earlier launch never shares a
+  name with a live one.
+- **The prompt line.** After its own line, each engine's prompt says: "Your
+  peer name is <name>. The person's other conversations in this app: <the
+  others with their names>. A thread can be reached only while it is open.
+  Message one with SendMessage only when your task overlaps its work, you
+  changed a file it is using, you found a pitfall it will hit, or the person
+  asked you to hand something over. Never send progress reports, and never
+  pass a message for the person through another conversation: the person
+  reads each one themselves. The person may be asked before a message is
+  sent."
+- **Sending asks first.** A `SendMessage` to another session on the machine
+  goes through `permission.request`, in every permission mode (a hook says
+  `ask`; the engine would send without asking). Config `[threads] messages =
+  "allow"` sends without the card. A message to one of the engine's own
+  subagents is never asked about. The tool row's summary is `<peer name>:
+  <the message's summary>`.
+- **Receiving.** The message begins a turn nobody sent in the receiving
+  chat (`turn.started`, no `user.text`), even when no turn has run there.
+  Right after it comes `chat.notice` with `kind: "peer.message"` and text
+  `Message from Main: <text>` (or `Thread 2`, or the peer name of any other
+  session): the text on one line, 600 characters at most. It is stamped, so
+  it is in the ring; `chat.history` from the engine's transcript has one
+  where the message was, and never draws the message as the person's. An
+  app that does not know the kind draws a plain notice line.
+- **A peer that is gone.** A closed thread's engine has left the engine's
+  registry; the send's `tool.finished` carries the engine's words ("No agent
+  named '<name>' is reachable.") as its summary.
 
 ### The `open_thread` tool (what Main's agent sees)
 With threads on, Main's engine (never a thread's) gets an in-process tool,
