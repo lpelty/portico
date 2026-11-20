@@ -294,15 +294,44 @@
 
   var lastRange = null;
 
+  // v0.28: inline code can be commented, as a whole. The inline code element
+  // a node is in (never one in a code block), or null.
+  function inlineCodeOf(node) {
+    var code = closestOf(node, "code");
+    return code && !code.closest("pre") ? code : null;
+  }
+
+  // A selection that starts or ends inside inline code takes the whole of it:
+  // the markers go outside its backticks, so part of one can't be anchored.
+  function widenToCode(range) {
+    var first = inlineCodeOf(range.startContainer), last = inlineCodeOf(range.endContainer);
+    var edge = function (code, end) {
+      var walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+      var node, found = null;
+      while ((node = walker.nextNode())) { if (!found || end) found = node; }
+      return found;
+    };
+    if (first) {
+      var a = edge(first, false);
+      if (a) range.setStart(a, 0);
+    }
+    if (last) {
+      var b = edge(last, true);
+      if (b) range.setEnd(b, b.data.length);
+    }
+    return range;
+  }
+
   function selectionInfo() {
     var sel = window.getSelection();
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
-    var range = snapRange(sel.getRangeAt(0));
+    var range = widenToCode(snapRange(sel.getRangeAt(0)));
     lastRange = range;
     var text = norm(range.toString()).trim();
     if (!text) return null;
     var info = { text: text, lines: null, occurrence: 0 };
-    var ignored = "pre, code, .properties, details.fm";
+    // Code blocks and front matter can't be commented; inline code can.
+    var ignored = "pre, .properties, details.fm";
     if (closestOf(range.startContainer, ignored) || closestOf(range.endContainer, ignored)) {
       info.refusal = "ignored";
       return info;
@@ -329,12 +358,12 @@
       info.table = Array.prototype.indexOf.call(a.matches("table") ? [a] : a.querySelectorAll("table"), tableA);
       a = cellA; // occurrences count within the cell
     }
-    // Occurrences count visible text only, as the source search does: text in code isn't counted.
+    // Occurrences count visible text only, as the source search does: text in a code block isn't counted.
     var whole = "", prefix = "", reached = false;
     var walker = document.createTreeWalker(a, NodeFilter.SHOW_TEXT);
     var node;
     while ((node = walker.nextNode())) {
-      var inCode = node.parentElement && node.parentElement.closest("code, pre");
+      var inCode = node.parentElement && node.parentElement.closest("pre");
       if (!reached && node === range.startContainer) {
         if (!inCode) prefix = whole + node.data.slice(0, range.startOffset);
         else prefix = whole;

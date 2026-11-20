@@ -195,7 +195,8 @@ def build_comment_tools(owner: Any) -> list[SdkMcpTool[Any]]:
     @tool(
         "comment_add",
         "Add a comment to a Markdown file, anchored on text in it: quote is the exact text to comment on, within one "
-        "paragraph and outside code; occurrence picks which match (1 is the first). The anchors and a new thread block "
+        "paragraph and outside a code block (inline code is quoted whole, never in part); occurrence picks which match "
+        "(1 is the first). The anchors and a new thread block "
         "are written into the file under your name. You can't resolve threads: resolving is the person's.",
         schema(
             {
@@ -228,10 +229,12 @@ def build_comment_tools(owner: Any) -> list[SdkMcpTool[Any]]:
                 return _error("That text isn't shown in the table.")
             if found == cm.INSIDE_ATOM:
                 return _error(f"\"{quote}\" is inside a link or an HTML entity in {raw}; quote text outside the link, or the link's address.")
+            if found == cm.INSIDE_CODE_SPAN:
+                return _error(f'"{quote}" is part of inline code in {raw}; quote the whole code, or text around it.')
             if found.startswith("occurs "):
                 n = found.split()[1]
                 return _error(f'"{quote}" occurs {n} times in {raw}; there is no occurrence {occurrence}.')
-            return _error(f'"{quote}" isn\'t in {raw} as text in one paragraph, outside code.')
+            return _error(f'"{quote}" isn\'t in {raw} as text in one paragraph, outside a code block.')
 
         try:
             text, _ = _read(path)

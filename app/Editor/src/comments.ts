@@ -35,6 +35,8 @@ export interface Scan {
   anchors: Anchor[];
   blocks: Block[];
   ignored: Array<[number, number]>;
+  // v0.28: inline code spans, backticks included (also in `ignored`): the code in one can be commented as a whole.
+  codeSpans: Array<[number, number]>;
   markers: Array<[number, number]>;
 }
 
@@ -368,7 +370,8 @@ export function scanComments(text: string): Scan {
     pos = Math.max(pos, b);
   }
   if (pos < text.length) textSegs.push([pos, text.length]);
-  const ignored = [...coarse, ...codeSpans(text, textSegs)].sort((x, y) => x[0] - y[0]);
+  const spans = codeSpans(text, textSegs);
+  const ignored = [...coarse, ...spans].sort((x, y) => x[0] - y[0]);
   const live = [...ignored, ...blocks.map((b) => [b.from, b.to] as [number, number])];
   const opens = new Map<string, [number, number]>();
   const closes = new Map<string, Array<[number, number]>>();
@@ -395,7 +398,7 @@ export function scanComments(text: string): Scan {
     if (o && c) anchors.push({ id, openFrom: o[0], openTo: o[1], closeFrom: c[0], closeTo: c[1] });
   }
   // Anchors with no thread are listed too; the caller tells them apart by the blocks.
-  return { anchors, blocks, ignored, markers };
+  return { anchors, blocks, ignored, codeSpans: spans, markers };
 }
 
 const hide = Decoration.replace({});
@@ -732,7 +735,35 @@ export function atoms(text: string): Atom[] {
     const from = m.index!, to = from + m[0].length;
     out.push({ from, to, innerFrom: from, innerTo: to });
   }
-  return out;
+  // v0.28: in inline code a link or an entity is the code's own text; the span itself is the
+  // atom, and a range that covers its code is written around the whole span.
+  const spans = scanComments(text).codeSpans;
+  const kept = out.filter((a) => !spans.some(([s, e]) => s <= a.from && a.from < e));
+  for (const [from, to] of spans) {
+    let n = from;
+    while (n < to && text[n] === "`") n++;
+    const run = n - from;
+    let innerFrom = from + run, innerTo = to - run;
+    const ws = " \t\n\r\f\x0b";
+    let a = innerFrom, b = innerTo;
+    while (a < b && ws.includes(text[a])) a++;
+    while (b > a && ws.includes(text[b - 1])) b--;
+    if (a < b) [innerFrom, innerTo] = [a, b];
+    kept.push({ from, to, innerFrom, innerTo });
+  }
+  return kept;
+}
+
+// v0.28: a range that starts or ends inside an inline code span, widened to the whole span
+// (the same rule as CommentFormat.widenToCodeSpans): part of a span can't be anchored.
+export function widenToCodeSpans(text: string, from: number, to: number): [number, number] {
+  for (const [a, b] of scanComments(text).codeSpans) {
+    if (from < b && to > a) {
+      from = Math.min(from, a);
+      to = Math.max(to, b);
+    }
+  }
+  return [from, to];
 }
 
 // v0.26 review M1: a range that covers an autolink's address but not its brackets, widened to
@@ -768,14 +799,17 @@ export function trimSelection(text: string, from: number, to: number): [number, 
   return a < b ? [a, b] : [from, to];
 }
 
-// Why a selection can't be anchored: "ignored" (code or front matter),
+// Why a selection can't be anchored: "ignored" (a code block or front matter),
 // "crosses" (more than one paragraph or list item), "cell" (across table
 // cells), "atom" (it starts or ends inside a link or an entity), or null.
 export function selectionRefusal(state: EditorState, from: number, to: number): "ignored" | "crosses" | "cell" | "atom" | null {
   if (to <= from) return "crosses";
   const text = state.doc.toString();
   const scan = scanComments(text);
-  if (scan.ignored.some(([a, b]) => from < b && to > a)) return "ignored";
+  // v0.28: a selection that touches inline code is anchored around the whole span.
+  [from, to] = widenToCodeSpans(text, from, to);
+  const inline = new Set(scan.codeSpans.map(([a]) => a));
+  if (scan.ignored.some(([a, b]) => !inline.has(a) && from < b && to > a)) return "ignored";
   if (scan.blocks.some((b) => from < b.to && to > b.from)) return "crosses";
   if (atoms(text).some((a) => splitsAtom(a, from, to))) return "atom";
   const tree = syntaxTree(state);
@@ -786,7 +820,7 @@ export function selectionRefusal(state: EditorState, from: number, to: number): 
   };
   const a = ancestors(from, 1);
   const b = ancestors(to, -1);
-  const code = /^(FencedCode|CodeBlock|InlineCode|Frontmatter|FrontMatter)$/;
+  const code = /^(FencedCode|CodeBlock|Frontmatter|FrontMatter)$/;
   if (a.some((n) => code.test(n.name)) || b.some((n) => code.test(n.name))) return "ignored";
   // A table: only within one cell (spec §13); an escaped pipe is text in its cell.
   const inTable = (list: typeof a) => list.some((n) => n.name === "Table");

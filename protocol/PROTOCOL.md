@@ -2227,7 +2227,7 @@ and allowed with no permission card:
 |---|---|---|
 | `comments_list` | `path`, `include_resolved?` | Each thread: id, status, quote, anchored text (or "not found"), and its replies with author and time. Resolved threads only with `include_resolved`. |
 | `comment_reply` | `path`, `id`, `text` | Adds a reply by the agent (the `brand.agent_name` the app received in `hello`), with the time now. A resolved thread stays resolved. |
-| `comment_add` | `path`, `quote`, `text`, `occurrence?` | Anchors a new thread on the `occurrence`-th (default first) match of `quote`, within one paragraph and outside code, by the agent. |
+| `comment_add` | `path`, `quote`, `text`, `occurrence?` | Anchors a new thread on the `occurrence`-th (default first) match of `quote`, within one paragraph and outside a code block (v0.28: inline code is quoted whole and anchored outside its backticks; part of one is refused), by the agent. |
 
 Agents can't resolve threads; resolving is the person's. A path must be
 inside the chat's folders (a relative path resolves against the chat's

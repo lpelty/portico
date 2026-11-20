@@ -99,7 +99,7 @@ ERRORS = [
     ("comments_list", {"path": "missing.md"}, "There is no file at missing.md."),
     ("comment_reply", {"path": "a.md", "id": "zzzzz", "text": "x"}, "No comment thread zzzzz in a.md."),
     ("comment_reply", {"path": "a.md", "id": "k3x9a", "text": "  "}, "Write the comment's text."),
-    ("comment_add", {"path": "a.md", "quote": "not there", "text": "x"}, '"not there" isn\'t in a.md as text in one paragraph, outside code.'),
+    ("comment_add", {"path": "a.md", "quote": "not there", "text": "x"}, '"not there" isn\'t in a.md as text in one paragraph, outside a code block.'),
     ("comment_add", {"path": "a.md", "quote": "Closing", "text": "x", "occurrence": 3}, '"Closing" occurs 1 times in a.md; there is no occurrence 3.'),
 ]
 
@@ -236,4 +236,32 @@ async def test_add_refuses_text_inside_a_link_or_entity(folder: Path) -> None:
     out = await tools(folder)["comment_add"].handler({"path": "u.md", "quote": "alpha", "text": "x"})
     assert out.get("is_error") is True
     assert text_of(out) == "\"alpha\" is inside a link or an HTML entity in u.md; quote text outside the link, or the link's address."
+    assert p.read_bytes() == before
+
+
+async def test_add_anchors_whole_inline_code_outside_its_backticks(folder: Path) -> None:
+    """v0.28 (PORT-50): inline code can be commented; the markers go outside the backticks, so the code is untouched."""
+    p = put(folder, "c.md", text="Run `make test` now.\n")
+    out = await tools(folder)["comment_add"].handler({"path": "c.md", "quote": "make test", "text": "Which target?"})
+    assert out.get("is_error") is not True, text_of(out)
+    written = p.read_text()
+    assert "-->`make test`<!--/c:" in written
+    assert 'quote:"make test"' in written
+    assert "`make test`" in cm.strip_markers(written)
+
+
+async def test_add_refuses_part_of_inline_code(folder: Path) -> None:
+    p = put(folder, "c.md", text="Run `make test` now.\n")
+    before = p.read_bytes()
+    out = await tools(folder)["comment_add"].handler({"path": "c.md", "quote": "make", "text": "x"})
+    assert out.get("is_error") is True
+    assert text_of(out) == '"make" is part of inline code in c.md; quote the whole code, or text around it.'
+    assert p.read_bytes() == before
+
+
+async def test_add_still_refuses_a_code_block(folder: Path) -> None:
+    p = put(folder, "c.md", text="```\nmake test\n```\n\nPara.\n")
+    before = p.read_bytes()
+    out = await tools(folder)["comment_add"].handler({"path": "c.md", "quote": "make test", "text": "x"})
+    assert out.get("is_error") is True
     assert p.read_bytes() == before

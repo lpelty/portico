@@ -60,11 +60,22 @@ Agent (2026-11-07T18:40:00.000Z): The ones in this folder.
 
 - Text within one cell of a GFM table can be commented: the anchors go inside that cell's text, and the thread block goes after the whole table.
 - A cell boundary (an unescaped `|`) and the delimiter row (`|---|:--:|`) are never inside a match, so a quote or selection can't span cells. An escaped pipe (`\|`) is text in its cell; an anchor never goes between its backslash and its pipe.
-- Inline code in a cell is code: it can't be anchored.
+- Inline code in a cell is anchored as inline code is anywhere (v0.28): as a whole, the markers outside its backticks, inside the cell.
 
 ## Ignored regions
 
-Markup inside front matter, fenced code blocks (```` ``` ```` and `~~~`), indented code blocks and inline code spans is not a comment.
+Markup inside front matter, fenced code blocks (```` ``` ```` and `~~~`), indented code blocks and inline code spans is not a comment: marker-shaped text there is the code's own text.
+
+## Inline code (v0.28)
+
+```
+Run <!--c:k3x9a-->`make test`<!--/c:k3x9a--> now.
+```
+
+- The code in an inline code span can be commented, as a whole. The markers go outside the span's backticks, so the code is untouched and still renders as code; they are never written inside a span.
+- A span is an atom, as an autolink is: a match may cover it (alone, or with text around it), and may not start or end inside it. An agent's quote of part of the code is refused ("inside inline code"), never widened. A person's selection that starts or ends inside a span takes the whole span.
+- The header's `quote` is what was matched: for the code alone, the code without its backticks.
+- A code block (fenced or indented) and front matter still can't be commented.
 
 ## Orphans
 
@@ -81,9 +92,9 @@ A quote (from the agent's `comment_add`, or the person's selection) is matched a
 
 - existing comment markers are invisible;
 - link destinations and titles, the brackets around link text, whole images (alt text and address), HTML tags and comments, the angle brackets of autolinks, link reference definitions and thread blocks are not searched, and no match runs across them;
-- text in code (inline, fenced or indented) and front matter can't be anchored;
+- text in a code block (fenced or indented) and front matter can't be anchored; inline code is searched as the text a reader sees (v0.28): its backticks are invisible, and so is the one space dropped from each end of a span that begins and ends with one;
 - the `occurrence` of a match counts visible matches only;
 - `>` prefixes on wrapped lines, and indentation, count as whitespace;
 - whitespace runs compare equal;
 - the match must lie in one paragraph (no blank line inside it), outside ignored regions and thread blocks;
-- (v0.25) a match may not start or end inside an atom: an autolink with its angle brackets (`<https://…>`, `<name@host>`), a bare URL (`https://` or `http://` or `www.`, up to whitespace, `<` or `]`; v0.26: trailing `.,:;!?)]'"` left out, as GFM does) or an HTML entity (`&name;`, `&#123;`, `&#x1F;`). Whitespace here is exactly space, tab, line feed, carriage return, form feed and vertical tab, in every reader. Markers there would break the link or the entity. Such a match is refused ("inside a link or entity"), never widened, and it still counts as an occurrence. A match that covers a whole atom (a whole bare URL) is fine, and so is one that covers an autolink's address (v0.26: its brackets aren't shown, so they can't be quoted). Then the markers are written around the whole `<…>`, outside its brackets, so the link still renders; the header's `quote` stays the address.
+- (v0.25) a match may not start or end inside an atom: an autolink with its angle brackets (`<https://…>`, `<name@host>`), a bare URL (`https://` or `http://` or `www.`, up to whitespace, `<` or `]`; v0.26: trailing `.,:;!?)]'"` left out, as GFM does) or an HTML entity (`&name;`, `&#123;`, `&#x1F;`); v0.28: or an inline code span, in which a link or an entity is the code's own text and not an atom of its own. Whitespace here is exactly space, tab, line feed, carriage return, form feed and vertical tab, in every reader. Markers there would break the link or the entity. Such a match is refused ("inside a link or entity"), never widened, and it still counts as an occurrence. A match that covers a whole atom (a whole bare URL) is fine, and so is one that covers an autolink's address (v0.26: its brackets aren't shown, so they can't be quoted). Then the markers are written around the whole `<…>`, outside its brackets, so the link still renders; the header's `quote` stays the address. The same holds for a match that covers the code of an inline code span: the markers go outside its backticks.

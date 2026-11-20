@@ -245,7 +245,7 @@ def test_a_match_inside_a_link_or_entity_is_refused():
     assert cm.find_quote("Visit www.alpha.com today.\n", "alpha", 1) == "inside a link or entity"
     assert cm.find_quote("A &#123; B &#x1F; C\n", "#1", 1) == "inside a link or entity"
     assert cm.find_quote("Tom &amp; Jerry.\n", "Tom &amp; Jerry", 1) == (0, 15), "a match holding the whole entity is fine"
-    assert cm.find_quote("`https://alpha.com` text\n", "alpha", 1) == "inside code or front matter"
+    assert cm.find_quote("`https://alpha.com` text\n", "alpha", 1) == "inside inline code"
 
 
 # --- v0.26 review M1: an autolink's address quoted, the markers outside its brackets ----------

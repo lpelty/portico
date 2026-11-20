@@ -175,6 +175,7 @@ final class CommentFormatTests: XCTestCase {
                 case "crosses paragraphs": want = .crossesBlocks
                 case "not shown in the table": want = .notShown
                 case "inside a link or entity": want = .insideAtom
+                case "inside inline code": want = .insideCodeSpan
                 default: want = .occurs(Int(refusal.split(separator: " ")[1])!)
                 }
                 XCTAssertEqual(got, .failure(want), "\(c["name"]!)")
@@ -242,8 +243,9 @@ final class CommentFormatTests: XCTestCase {
 
     /// v0.26 review M1: quoting an autolink's address writes the markers around the whole `<…>`.
     func testQuotingAnAutolinksAddressKeepsTheLink() throws {
+        // v0.28: and quoting the whole of an inline code span writes them outside its backticks.
         let cases = try Self.cases().filter { $0["expect_link"] != nil }
-        XCTAssertEqual(cases.count, 3)
+        XCTAssertEqual(cases.count, 5)
         for c in cases {
             let a = c["args"] as! [String: Any]
             let text = try Self.read(c["file"] as! String)
