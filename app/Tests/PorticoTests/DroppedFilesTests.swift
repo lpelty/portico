@@ -45,6 +45,79 @@ final class DroppedFilesTests: XCTestCase {
         return provider
     }
 
+    /// A provider as a drop hands it over: it can be read only while the
+    /// drop is being handled. A read first asked for after `close()` gets
+    /// nothing, as in a running app once the drop handler has returned.
+    private final class DropProvider: NSItemProvider, @unchecked Sendable {
+        private let lock = NSLock()
+        private var open = true
+
+        func close() {
+            lock.withLock { open = false }
+        }
+
+        private var isOpen: Bool { lock.withLock { open } }
+
+        override func loadObject(
+            ofClass aClass: any NSItemProviderReading.Type,
+            completionHandler: @escaping @Sendable ((any NSItemProviderReading)?, (any Error)?) -> Void
+        ) -> Progress {
+            guard isOpen else {
+                completionHandler(nil, CocoaError(.fileReadNoPermission))
+                return Progress()
+            }
+            return super.loadObject(ofClass: aClass, completionHandler: completionHandler)
+        }
+
+        override func loadFileRepresentation(
+            forTypeIdentifier typeIdentifier: String, completionHandler: @escaping @Sendable (URL?, (any Error)?) -> Void
+        ) -> Progress {
+            guard isOpen else {
+                completionHandler(nil, CocoaError(.fileReadNoPermission))
+                return Progress()
+            }
+            return super.loadFileRepresentation(forTypeIdentifier: typeIdentifier, completionHandler: completionHandler)
+        }
+    }
+
+    func testEveryReadIsAskedForBeforeTheDropHandlerReturns() async throws {
+        let pending = base.appendingPathComponent("pending")
+        let onDisk = try XCTUnwrap(DropProvider(contentsOf: base.appendingPathComponent("notes.md")))
+        let promise = DropProvider()
+        promise.suggestedName = "Quarterly plan.txt"
+        let source = base.appendingPathComponent("promise-source.txt")
+        try Data("plan".utf8).write(to: source)
+        promise.registerFileRepresentation(forTypeIdentifier: UTType.plainText.identifier, fileOptions: [], visibility: .all) { completion in
+            completion(source, false, nil)
+            return nil
+        }
+
+        let reading = DroppedFiles.begin([onDisk, promise], promisedInto: pending)
+        onDisk.close()  // the drop handler has returned
+        promise.close()
+        let result = await reading.value
+        XCTAssertEqual(
+            result,
+            DroppedFiles.Result(paths: [
+                base.appendingPathComponent("notes.md").path, pending.appendingPathComponent("Quarterly plan.txt").path,
+            ]))
+
+        // Through the model, as the two drop targets call it.
+        let model = AppModel()
+        model.attachmentsHome = base
+        let again = try XCTUnwrap(DropProvider(contentsOf: base.appendingPathComponent("notes.md")))
+        let attaching = model.attachDropped([again], to: 3)
+        again.close()
+        _ = await attaching.value
+        XCTAssertEqual(model.draftAttachments[3], [base.appendingPathComponent("notes.md").path])
+
+        // Asked for too late, a read gives nothing: what v0.28.0 did.
+        let late = try XCTUnwrap(DropProvider(contentsOf: base.appendingPathComponent("notes.md")))
+        late.close()
+        let nothing = await DroppedFiles.load([late], promisedInto: pending)
+        XCTAssertEqual(nothing, DroppedFiles.Result(paths: [], folders: 0, failed: 1))
+    }
+
     /// Dragged text, as a text view or a browser gives it: no file's name.
     private func text(_ string: String, named name: String? = nil) -> NSItemProvider {
         let provider = NSItemProvider(object: string as NSString)

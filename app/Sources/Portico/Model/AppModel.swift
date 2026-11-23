@@ -828,6 +828,7 @@ final class AppModel: ObservableObject {
     // MARK: - v0.22: space actions, notices, fixed spaces, refreshing
 
     nonisolated static let spacesLog = Logger(subsystem: "Portico", category: "spaces")
+    nonisolated static let dropLog = Logger(subsystem: "Portico", category: "drop")
 
     /// The open space's pane scrolls to `fragment` once (S2: a click on a
     /// worded notice). `serial` makes a second click a new request.
@@ -2701,13 +2702,19 @@ final class AppModel: ObservableObject {
 
     /// A drop over the conversation or its message box (v0.28, PORT-79):
     /// files on disk, and promised files once they have been written to the
-    /// pending folder, become the draft's attachments. The task is returned
-    /// for tests.
+    /// pending folder, become the draft's attachments. The reading is begun
+    /// before this returns: a drop's providers give nothing once the drop
+    /// handler has returned. The task is returned for tests.
     @discardableResult
     func attachDropped(_ providers: [NSItemProvider], to chat: Int) -> Task<DroppedFiles.Result, Never> {
         let folder = attachmentsHome.map(PastedImages.pendingFolder(home:))
+        let reading = DroppedFiles.begin(providers, promisedInto: folder)
+        // What a drop held and what came of it: types and counts only, never a name or a path.
+        let held = providers.map { "\(DroppedFiles.takes($0) ? "file" : "left") \($0.registeredTypeIdentifiers)" }.joined(separator: "; ")
         return Task { [weak self] in
-            let result = await DroppedFiles.load(providers, promisedInto: folder)
+            let result = await reading.value
+            Self.dropLog.notice(
+                "drop: \(held, privacy: .public) -> attached \(result.paths.count), folders \(result.folders), failed \(result.failed)")
             if !result.paths.isEmpty { self?.attach(result.paths, to: chat) }
             return result
         }

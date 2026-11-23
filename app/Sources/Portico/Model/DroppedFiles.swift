@@ -38,18 +38,35 @@ enum DroppedFiles {
         var failed = 0
     }
 
-    /// Read every provider. `folder` is where promised files are kept
-    /// (`PastedImages.pendingFolder`); `nil` (no home) fails them.
-    static func load(_ providers: [NSItemProvider], promisedInto folder: URL?) async -> Result {
-        var result = Result()
-        for provider in providers where takes(provider) {
-            switch await load(provider, promisedInto: folder) {
-            case .file(let path): result.paths.append(path)
-            case .folder: result.folders += 1
-            case .none: result.failed += 1
+    /// Begin reading every provider now, and answer when all have. `folder`
+    /// is where promised files are kept (`PastedImages.pendingFolder`);
+    /// `nil` (no home) fails them.
+    ///
+    /// A drop's providers can be read only while the drop is being handled:
+    /// a read first asked for after the drop handler has returned gets
+    /// nothing (v0.28.0 in a running app: the drop was accepted and no file
+    /// was attached). So every read is asked for before this returns, and a
+    /// drop handler calls it before it returns.
+    static func begin(_ providers: [NSItemProvider], promisedInto folder: URL?) -> Task<Result, Never> {
+        let reading = providers.filter(takes).map { begin($0, promisedInto: folder) }
+        return Task {
+            var result = Result()
+            for answers in reading {
+                var one = One.none
+                for await answer in answers { one = answer }
+                switch one {
+                case .file(let path): result.paths.append(path)
+                case .folder: result.folders += 1
+                case .none: result.failed += 1
+                }
             }
+            return result
         }
-        return result
+    }
+
+    /// `begin`, awaited.
+    static func load(_ providers: [NSItemProvider], promisedInto folder: URL?) async -> Result {
+        await begin(providers, promisedInto: folder).value
     }
 
     private enum One: Sendable {
@@ -58,33 +75,25 @@ enum DroppedFiles {
         case none
     }
 
-    private static func load(_ provider: NSItemProvider, promisedInto folder: URL?) async -> One {
+    /// Ask one provider for its file, now; the stream gives its one answer.
+    private static func begin(_ provider: NSItemProvider, promisedInto folder: URL?) -> AsyncStream<One> {
+        let (answers, continuation) = AsyncStream<One>.makeStream()
+        let answer: @Sendable (One) -> Void = { one in
+            continuation.yield(one)
+            continuation.finish()
+        }
         if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            guard let url = await fileURL(of: provider), url.isFileURL else { return .none }
-            let isFolder = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-            return isFolder ? .folder : .file(url.path)
-        }
-        guard let folder, takes(provider), provider.hasItemConformingToTypeIdentifier(UTType.item.identifier) else {
-            return .none
-        }
-        return await promised(provider, into: folder)
-    }
-
-    private static func fileURL(of provider: NSItemProvider) async -> URL? {
-        await withCheckedContinuation { continuation in
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                continuation.resume(returning: url)
+            _ = provider.loadObject(ofClass: NSURL.self) { object, _ in
+                guard let url = object as? URL, url.isFileURL else { return answer(.none) }
+                let isFolder = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                answer(isFolder ? .folder : .file(url.path))
             }
-        }
-    }
-
-    /// The provider writes its file to a place of its own and removes it
-    /// when the handler returns: the copy is made inside the handler.
-    private static func promised(_ provider: NSItemProvider, into folder: URL) async -> One {
-        let suggested = provider.suggestedName
-        return await withCheckedContinuation { continuation in
+        } else if let folder, provider.hasItemConformingToTypeIdentifier(UTType.item.identifier) {
+            // The provider writes its file to a place of its own and removes it
+            // when the handler returns: the copy is made inside the handler.
+            let suggested = provider.suggestedName
             _ = provider.loadFileRepresentation(forTypeIdentifier: UTType.item.identifier) { url, _ in
-                guard let url else { return continuation.resume(returning: .none) }
+                guard let url else { return answer(.none) }
                 do {
                     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                     let ext = url.pathExtension
@@ -92,11 +101,14 @@ enum DroppedFiles {
                     if name.isEmpty { name = url.deletingPathExtension().lastPathComponent }
                     let destination = PastedImages.unique(name, ext: ext, in: folder)
                     try FileManager.default.copyItem(at: url, to: destination)
-                    continuation.resume(returning: .file(destination.path))
+                    answer(.file(destination.path))
                 } catch {
-                    continuation.resume(returning: .none)
+                    answer(.none)
                 }
             }
+        } else {
+            answer(.none)
         }
+        return answers
     }
 }
