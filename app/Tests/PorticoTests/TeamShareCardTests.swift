@@ -117,6 +117,38 @@ final class TeamShareCardTests: XCTestCase {
         XCTAssertEqual(model.teamCardFiles(card(.shared)), [], "no shared rows: Stop syncing is not offered, the card still reads Shared")
     }
 
+    func testStopSyncingFindsTheCardsFilesHoweverEachSideNamesThem() {
+        let (model, sent) = model()
+        let larry = TeamPerson(name: "Larry Pelty", short: "Larry")
+        func row(_ path: String) -> TeamFile {
+            TeamFile(path: path, direction: .out, rev: "r-1", sharedBy: larry, sharedAt: "2026-11-19T20:14:00Z")
+        }
+        func shared(_ paths: [String]) -> TeamShareCard {
+            TeamShareCard(chat: 1, share: "s-1", toolUseId: nil, paths: paths, note: nil, state: .shared, at: "2026-11-19T20:14:00Z")
+        }
+        let relative = "research/round-2/Research plan.md"
+        let absolute = "/Users/someone/work/research/round-2/Research plan.md"
+        var state = TeamState(reach: .ok, nextCheckAt: "2026-11-19T20:30:00Z", intervalMinutes: 15)
+        state.files = [row(relative), row("/Users/someone/elsewhere/guide.md"), row("other.md")]
+        model.apply(.teamState(state))
+
+        XCTAssertEqual(model.teamCardFiles(shared([relative])).map(\.path), [relative])
+        XCTAssertEqual(model.teamCardFiles(shared([absolute])).map(\.path), [relative], "the card absolute, the row relative")
+        XCTAssertEqual(
+            model.teamCardFiles(shared(["/Users/someone/work/research/../research/round-2/Research plan.md"])).map(\.path), [relative])
+        XCTAssertEqual(
+            model.teamCardFiles(shared(["/Users/someone/elsewhere/guide.md"])).map(\.path), ["/Users/someone/elsewhere/guide.md"])
+        XCTAssertEqual(model.teamCardFiles(shared(["research/round-2/interview-guide.md"])), [], "not a shared row")
+
+        state.files = [row(absolute)]
+        model.apply(.teamState(state))
+        XCTAssertEqual(model.teamCardFiles(shared([relative])).map(\.path), [absolute], "the card relative, the row absolute")
+
+        model.teamCardStop(shared([relative]))
+        let stops = sent.frames.compactMap { if case .teamStop(let stop) = $0 { stop } else { nil } }
+        XCTAssertEqual(stops.map(\.paths), [[absolute]], "Stop syncing names the file as its row does")
+    }
+
     func testTheSharedLineSaysWhen() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/Chicago"))

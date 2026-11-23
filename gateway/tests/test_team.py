@@ -1122,6 +1122,15 @@ async def test_a_share_the_agent_cannot_offer_is_refused_and_leaves_no_card(
         callbacks = team_server.registry.get(chat).engine.callbacks  # type: ignore[union-attr]
         assert await callbacks.on_share_with_team([], "A note") == f"{SHARE_REFUSAL_PREFIX}name the files to share."
         assert await callbacks.on_share_with_team(["missing.md"], "") == f"{SHARE_REFUSAL_PREFIX}missing.md isn't a file."
+        # Only the chat's own folders: not a file reached by ``..``, by an absolute path, or through a link.
+        outside = tmp_path / "outside.md"
+        outside.write_text("# Not this chat's\n")
+        (work / "link.md").symlink_to(outside)
+        (work / "inside.md").write_text("# Inside\n")
+        for raw in ("../outside.md", str(outside), "link.md", "/etc/hosts"):
+            refusal = f"{SHARE_REFUSAL_PREFIX}{raw} is outside this session's folders."
+            assert await callbacks.on_share_with_team([raw], "") == refusal
+            assert await callbacks.on_share_with_team(["inside.md", raw], "") == refusal, "one outside refuses the whole offer"
         assert state_dir.load_index().share_cards == []
     finally:
         await conn.close()

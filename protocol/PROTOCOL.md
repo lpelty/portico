@@ -1710,12 +1710,12 @@ gateway. Nothing is added to the protocol but one `chat.notice` kind.
   pass a message for the person through another conversation: the person
   reads each one themselves. The person may be asked before a message is
   sent."
-- **Sending asks first.** A `SendMessage` to another session on the machine
-  goes through `permission.request`, in every permission mode (a hook says
-  `ask`; the engine would send without asking). Config `[threads] messages =
-  "allow"` sends without the card. A message to one of the engine's own
-  subagents is never asked about. The tool row's summary is `<peer name>:
-  <the message's summary>`.
+- **Sending asks first.** Every `SendMessage` goes through
+  `permission.request`, in every permission mode (a hook says `ask`; the
+  engine would send without asking). The gateway does not try to tell whom
+  a `to` names, so a message to one of the engine's own subagents is asked
+  about too. Config `[threads] messages = "allow"` sends without the card.
+  The tool row's summary is `<peer name>: <the message's summary>`.
 - **Receiving.** The message begins a turn nobody sent in the receiving
   chat (`turn.started`, no `user.text`), even when no turn has run there.
   Right after it comes `chat.notice` with `kind: "peer.message"` and text
@@ -2555,8 +2555,9 @@ a conversation because the person asked there. With team knowledge on,
 every chat's agent has the tool `share_with_team` (`files`, `note?`): it
 starts a draft (`team.share.draft` with `chat`, its `id` equal to
 `share`), stores this record and returns at once; a call with no files,
-a path that is not a file, or a draft the deployment refuses is answered
-"Not offered: …" and leaves nothing. Nothing reaches the team source
+a path that is not a file, a file outside the chat's folder, the roots and
+the spaces folder (once `..` and links are resolved), or a draft the
+deployment refuses is answered "Not offered: …" and leaves nothing. Nothing reaches the team source
 until the person's `team.share.send` for `share`; then the record becomes
 `shared` with `at` (and the note the person sent). `team.share.cancel`
 makes it `cancelled`. `tool_use_id` is the tool row the app draws the

@@ -395,9 +395,9 @@ class ThreadsConfig(BaseModel):
     Threads are single presentation only.
 
     ``messages`` (v0.28): Main and its threads may message each other through
-    the engine's peer messaging. ``ask`` (default) puts every message to
-    another session behind the person's permission card; ``allow`` sends
-    without one.
+    the engine's peer messaging. ``ask`` (default) puts every message the
+    engine sends (to another session or to one of its own subagents) behind
+    the person's permission card; ``allow`` sends without one.
     """
 
     model_config = ConfigDict(extra="forbid")

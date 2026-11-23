@@ -581,54 +581,17 @@ def peer_notice(found: tuple[str, str], chat: int, ts: str, label: Any = None) -
     return ChatNotice(ts=ts, chat=chat, text=peer_notice_text(shown, found[1]), kind=PEER_NOTICE)
 
 
-def session_peer_names(directory: Path | None = None) -> set[str]:
-    """The peer names of the Claude sessions running on this machine (``~/.claude/sessions/*.json``); empty on any failure."""
-    folder = directory if directory is not None else Path.home() / ".claude" / "sessions"
-    names: set[str] = set()
-    try:
-        files = list(folder.glob("*.json"))
-    except OSError:
-        return names
-    for file in files:
-        try:
-            entry = json.loads(file.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        name = entry.get("name") if isinstance(entry, dict) else None
-        if isinstance(name, str) and name:
-            names.add(name)
-    return names
-
-
-def is_peer_session(to: Any, names: set[str]) -> bool:
-    """Whether ``to`` (a SendMessage ``to``) is another session on this machine, not one of this engine's own subagents.
-
-    A session is addressed by its peer name (a row may add `` [ref]``), or by
-    its socket (``uds:…``).
-    """
-    if not isinstance(to, str) or not to.strip():
-        return False
-    target = to.strip()
-    if target.startswith("uds:"):
-        return True
-    return re.sub(r"\s*\[[^\]]*\]\Z", "", target) in names
-
-
-def build_peer_send_hook(sessions: Any = session_peer_names):
-    """The ``PreToolUse`` hook on SendMessage: a message to another session asks the person first.
+def build_peer_send_hook():
+    """The ``PreToolUse`` hook on SendMessage: every send asks the person first.
 
     The engine sends without asking (checked 2026-11-20); ``ask`` here puts
-    the call through ``can_use_tool``, so the person's card. A message to one
-    of the engine's own subagents is left alone.
+    the call through ``can_use_tool``, so the person's card. Whom a ``to``
+    names (another session here or elsewhere, or one of the engine's own
+    subagents) cannot be told for certain, so none is let through unasked.
     """
 
     async def peer_send_hook(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
-        tool_input = input.get("tool_input") if isinstance(input, Mapping) else None
-        to = tool_input.get("to") if isinstance(tool_input, Mapping) else None
-        names = await asyncio.to_thread(sessions)
-        if is_peer_session(to, names):
-            return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask"}}
-        return {}
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask"}}
 
     return peer_send_hook
 

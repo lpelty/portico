@@ -45,6 +45,37 @@ final class DroppedFilesTests: XCTestCase {
         return provider
     }
 
+    /// Dragged text, as a text view or a browser gives it: no file's name.
+    private func text(_ string: String, named name: String? = nil) -> NSItemProvider {
+        let provider = NSItemProvider(object: string as NSString)
+        provider.suggestedName = name
+        return provider
+    }
+
+    func testDraggedTextAndALinkAreNotFiles() async throws {
+        let pending = base.appendingPathComponent("pending")
+        let link = NSItemProvider(object: try XCTUnwrap(URL(string: "https://example.com/report.pdf")) as NSURL)
+        link.suggestedName = "report.pdf"
+        let notFiles = [text("some words"), text("some words", named: "A title"), text("some words", named: ".hidden"), link]
+        for provider in notFiles {
+            XCTAssertFalse(DroppedFiles.takes(provider))
+        }
+        XCTAssertFalse(DroppedFiles.takes(notFiles), "a drop of these alone is refused")
+        XCTAssertFalse(DroppedFiles.takes([]))
+
+        let result = await DroppedFiles.load(notFiles, promisedInto: pending)
+        XCTAssertEqual(result, DroppedFiles.Result(), "nothing attached, nothing counted as a file that failed")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: pending.path), "nothing was written")
+
+        // Beside a file, the file alone is taken.
+        XCTAssertTrue(DroppedFiles.takes([text("some words"), try onDisk("notes.md")]))
+        let mixed = await DroppedFiles.load([text("some words"), try onDisk("notes.md"), link], promisedInto: pending)
+        XCTAssertEqual(mixed, DroppedFiles.Result(paths: [base.appendingPathComponent("notes.md").path]))
+
+        XCTAssertTrue(DroppedFiles.takes(try onDisk("a-folder")), "a folder is a file on disk: counted and left out by load")
+        XCTAssertTrue(DroppedFiles.takes(promised("Quarterly plan.txt", "plan")))
+    }
+
     func testAFileOnDiskIsAttachedWhereItIs() async throws {
         let result = await DroppedFiles.load([try onDisk("notes.md")], promisedInto: nil)
         XCTAssertEqual(result, DroppedFiles.Result(paths: [base.appendingPathComponent("notes.md").path]))

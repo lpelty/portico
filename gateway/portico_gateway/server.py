@@ -4158,8 +4158,9 @@ class GatewayServer:
         """The agent's ``share_with_team``: start a draft for ``chat`` and send its card; returns what the agent reads.
 
         A relative path is the chat's folder's. No files, a path that is not
-        a file, or a draft the deployment refuses is answered as a refusal
-        and nothing is kept. Nothing reaches the team source here: only the
+        a file, a file outside the chat's folder, the roots and the spaces
+        folder (once ``..`` and links are resolved), or a draft the
+        deployment refuses is answered as a refusal and nothing is kept. Nothing reaches the team source here: only the
         person's Share (``team.share.send``) does.
         """
         if not self.team.active:
@@ -4171,8 +4172,14 @@ class GatewayServer:
             path = Path(raw).expanduser()
             if not path.is_absolute():
                 path = chat.folder / path
+            try:
+                path = path.resolve()
+            except OSError:
+                return f"{SHARE_REFUSAL_PREFIX}{raw} isn't a file."
             if not path.is_file():
                 return f"{SHARE_REFUSAL_PREFIX}{raw} isn't a file."
+            if not any(path.is_relative_to(folder) for folder in self._shown_folders(chat)):
+                return f"{SHARE_REFUSAL_PREFIX}{raw} is outside this session's folders."
             paths.append(self._team_path(path))
         id = f"s-{uuid.uuid4().hex[:8]}"
         refused = await self.team.prepare(id, paths, note=note or None, chat=chat.number)

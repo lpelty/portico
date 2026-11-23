@@ -22,10 +22,8 @@ from portico_gateway.engine import (
     build_options,
     build_peer_send_hook,
     history_events,
-    is_peer_session,
     peer_message,
     result_summary,
-    session_peer_names,
     summarize_tool,
 )
 from portico_gateway.messages import ChatNotice, ChatState, TextDelta, TurnFinished, TurnStarted, UserText
@@ -121,31 +119,14 @@ def test_the_send_and_its_answer_read_plainly() -> None:
 # --- asking before a send -----------------------------------------------------
 
 
-def test_the_sessions_on_this_machine_are_read_from_their_registry(tmp_path: Path) -> None:
-    (tmp_path / "1.json").write_text(json.dumps({"pid": 1, "name": "work-ab12-main"}))
-    (tmp_path / "2.json").write_text(json.dumps({"pid": 2, "name": "bill-68"}))
-    (tmp_path / "3.json").write_text("not json")
-    (tmp_path / "4.json").write_text(json.dumps(["a list"]))
-    (tmp_path / "1.abc.key").write_text("secret")
-    assert session_peer_names(tmp_path) == {"work-ab12-main", "bill-68"}
-    assert session_peer_names(tmp_path / "missing") == set()
-
-
-def test_only_another_session_counts_as_a_peer() -> None:
-    names = {"work-ab12-main", "bill-68"}
-    assert is_peer_session("work-ab12-main", names)
-    assert is_peer_session("bill-68 [18d870]", names), "a row's ref after the name"
-    assert is_peer_session("uds:/tmp/cc-socks/1.sock", set())
-    assert not is_peer_session("researcher", names), "one of the engine's own subagents"
-    assert not is_peer_session("", names) and not is_peer_session(None, names)
-
-
-async def test_the_hook_asks_only_for_a_message_to_another_session() -> None:
-    hook = build_peer_send_hook(lambda: {"work-ab12-thread-1"})
-    asked = await hook({"tool_name": PEER_SEND_TOOL, "tool_input": {"to": "work-ab12-thread-1", "message": "x"}}, "t1", None)
-    assert asked == {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask"}}
-    assert await hook({"tool_name": PEER_SEND_TOOL, "tool_input": {"to": "researcher", "message": "x"}}, "t2", None) == {}
-    assert await hook({"tool_name": PEER_SEND_TOOL}, "t3", None) == {}
+async def test_the_hook_asks_before_every_send() -> None:
+    hook = build_peer_send_hook()
+    ask = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask"}}
+    assert await hook({"tool_name": PEER_SEND_TOOL, "tool_input": {"to": "work-ab12-thread-1", "message": "x"}}, "t1", None) == ask
+    assert await hook({"tool_name": PEER_SEND_TOOL, "tool_input": {"to": "Work-AB12-thread-1 ", "message": "x"}}, "t2", None) == ask
+    assert await hook({"tool_name": PEER_SEND_TOOL, "tool_input": {"to": "researcher", "message": "x"}}, "t3", None) == ask
+    assert await hook({"tool_name": PEER_SEND_TOOL}, "t4", None) == ask, "nothing to read: it still asks"
+    assert await hook(None, None, None) == ask
 
 
 class Owner(RecordingCallbacks):

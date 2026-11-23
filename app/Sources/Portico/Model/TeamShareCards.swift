@@ -129,10 +129,19 @@ extension AppModel {
         if !sidebarVisible { toggleSidebar() }
     }
 
-    /// The card's files that are still shared rows, for Stop syncing.
+    /// The card's files that are still shared rows, for Stop syncing. A
+    /// card and a row may name one file differently (relative to the first
+    /// root, or absolute): they are compared as the file they name.
     func teamCardFiles(_ card: TeamShareCard) -> [TeamFile] {
         let rows = teamState?.files ?? []
-        return card.paths.compactMap { path in rows.first { $0.path == path } }
+        return card.paths.compactMap { path in
+            let file = Self.teamSameFile(teamAbsolutePath(path))
+            return rows.first { $0.path == path || (file != nil && Self.teamSameFile(teamAbsolutePath($0.path)) == file) }
+        }
+    }
+
+    private static func teamSameFile(_ absolute: String?) -> String? {
+        absolute.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
     }
 
     /// Stop syncing the card's files, each as its own row's Stop syncing does.

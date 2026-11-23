@@ -147,7 +147,7 @@ KEY_DOCS: dict[str, KeyDoc] = {
     # --- threads ----------------------------------------------------------------------
     "threads.max": KeyDoc("Threads open beside Main, 0 to 2; 0 turns threads off.", "max = 2", scope="either"),
     "threads.messages": KeyDoc(
-        '`"ask"`: a message from Main or a thread to another session waits for the person\'s yes on a card. `"allow"`: it is sent without one.',
+        '`"ask"`: every message Main or a thread sends (to another session, or to one of its own subagents) waits for the person\'s yes on a card. `"allow"`: it is sent without one.',
         'messages = "allow"', scope="either",
     ),
     # --- files ------------------------------------------------------------------------
