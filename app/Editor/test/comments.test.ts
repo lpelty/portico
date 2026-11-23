@@ -24,7 +24,7 @@ const { EditorState, EditorSelection } = await import("@codemirror/state");
 const { ensureSyntaxTree } = await import("@codemirror/language");
 const { markdown, markdownLanguage } = await import("@codemirror/lang-markdown");
 const { yamlFrontmatter } = await import("@codemirror/lang-yaml");
-const { scanComments, commentsExtension, commentDecorations, selectionRefusal, trimSelection, widenToAutolink } = await import("../src/comments.ts");
+const { scanComments, commentsExtension, commentDecorations, selectionRefusal, trimSelection, widenToAutolink, widenToCodeSpans } = await import("../src/comments.ts");
 const { createEditor } = await import("../src/editor.ts");
 type Message = import("../src/bridge.ts").Message;
 
@@ -160,7 +160,7 @@ test("selection in code or table refused", () => {
   const cell = text.indexOf("| 1");
   assert.equal(selectionRefusal(s, cell + 2, cell + 3), null, "within one cell (spec §13)");
   const inline = text.indexOf("make");
-  assert.equal(selectionRefusal(s, inline, inline + 4), "ignored");
+  assert.equal(selectionRefusal(s, inline, inline + 4), null, "v0.28: inline code is commented as a whole");
   assert.equal(selectionRefusal(s, text.indexOf("continues"), text.indexOf("three")), "crosses");
   assert.equal(selectionRefusal(s, text.indexOf("two"), text.indexOf("continues") + 4), null);
 });
@@ -204,7 +204,7 @@ test("an autolink's address anchors outside its brackets", async () => {
   const { createRequire } = await import("node:module");
   const { marked } = createRequire(import.meta.url)("../../Sources/Portico/Resources/marked.min.js");
   const linkCases = cases.filter((c: any) => c.expect_link);
-  assert.equal(linkCases.length, 3);
+  assert.equal(linkCases.length, 5); // v0.28: and two whole inline code spans
   for (const c of linkCases) {
     const text = read(c.file);
     const from = text.indexOf(c.args.quote);
@@ -214,6 +214,12 @@ test("an autolink's address anchors outside its brackets", async () => {
     const written = read(c.expect);
     assert.ok(written.includes(`<!--c:${c.args.id}-->${c.expect_link}<!--/c:${c.args.id}-->`), c.name);
     const html: string = marked.parse(written);
+    if (c.expect_link.startsWith("`")) {
+      // v0.28: the markers around a whole inline code span; the page still draws it as code.
+      const code = c.expect_link.slice(1, -1);
+      assert.ok(html.includes(`<!--c:${c.args.id}--><code>${code}</code><!--/c:${c.args.id}-->`), `${c.name}: ${html}`);
+      continue;
+    }
     const href = c.expect_link.slice(1, -1);
     assert.ok(html.includes(`<!--c:${c.args.id}--><a href="${href.includes("@") && !href.includes(":") ? "mailto:" + href : href}">`), `${c.name}: ${html}`);
   }
@@ -452,7 +458,7 @@ test("a selection in one table cell can be commented; across cells, a pipe or th
   assert.equal(selectionRefusal(s, at("a \\| b"), at("a \\| b") + 6), null, "an escaped pipe is text");
   assert.equal(selectionRefusal(s, at("alpha"), at("a \\| b") + 1), "cell");
   assert.equal(selectionRefusal(s, at(":-----"), at(":-----") + 3), "cell");
-  assert.equal(selectionRefusal(s, at("code"), at("code") + 4), "ignored");
+  assert.equal(selectionRefusal(s, at("code"), at("code") + 4), null, "v0.28: inline code in a cell can be commented");
 });
 
 test("the table widget shows comment highlights, never the markup", () => {
@@ -510,4 +516,28 @@ test("a list item selected to the next item's start can be commented", () => {
 
 test("trimming leaves a selection of only spaces alone", () => {
   assert.deepEqual(trimSelection("a   b", 1, 4), [1, 4]);
+});
+
+// v0.28 (PORT-50): inline code can be commented, as a whole; a code block still can't.
+test("a selection that touches inline code takes the whole span", () => {
+  const text = "Run `make test` now, see https://x.example/a.\n\n```\nmake test\n```\n";
+  const s = state(text);
+  const span: [number, number] = [text.indexOf("`make"), text.indexOf("` now") + 1];
+  const make = text.indexOf("make");
+  assert.deepEqual(widenToCodeSpans(text, make, make + 4), span, "part of the code");
+  assert.deepEqual(widenToCodeSpans(text, make + 5, text.indexOf("now") + 3), [span[0], text.indexOf("now") + 3], "from inside it to text after");
+  assert.deepEqual(widenToCodeSpans(text, 0, 3), [0, 3], "text outside is left alone");
+  assert.deepEqual(widenToAutolink(text, make, make + 9), span, "the whole code: the markers go outside its backticks");
+  assert.equal(selectionRefusal(s, make, make + 4), null);
+  assert.equal(selectionRefusal(s, 0, make + 4), null, "text and the code after it");
+  const block = text.lastIndexOf("make test");
+  assert.equal(selectionRefusal(s, block, block + 4), "ignored", "a code block is still refused");
+});
+
+test("a link inside inline code is the code's own text", () => {
+  const text = "See `https://alpha.example/x`s and done.\n";
+  const s = state(text);
+  const from = text.indexOf("https");
+  assert.equal(selectionRefusal(s, from, from + "https://alpha.example/x".length), null);
+  assert.equal(selectionRefusal(s, from + 8, from + 13), null, "widened to the span, not refused as a link");
 });

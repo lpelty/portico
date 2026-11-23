@@ -74,7 +74,11 @@ struct ThreadsPresentation: Equatable {
         }
         for thread in open {
             guard let info = thread.thread else { continue }
-            rows.append(row(thread, label: info.label, slot: info.slot, now: now))
+            // v0.28: the name leads the row; the number is its second line.
+            var shown = row(thread, label: ThreadName.shown(thread), slot: info.slot, now: now)
+            shown.subtitle = ThreadName.numberLine(thread)
+            shown.number = info.label
+            rows.append(shown)
         }
         return rows
     }
@@ -93,28 +97,33 @@ struct ThreadsPresentation: Equatable {
         return [shown.number, detail].compactMap { $0 }.joined(separator: " · ")
     }
 
-    /// At the limit, the threads to pick from (AM4): label, then the title
-    /// and last activity, "Pricing page · last reply 20 min ago".
+    /// At the limit, the threads to pick from (AM4; v0.28, ZL3): the name,
+    /// then the number and last activity, "Thread 1 · last reply 20 min ago".
     func limitChoices(now: Date) -> [LimitChoice] {
         open.compactMap { summary in
             guard let info = summary.thread else { return nil }
             let row = row(summary, label: info.label, slot: info.slot, now: now)
             let activity: String?
             switch row.status {
-            case .working: activity = "working now"
+            case .working: activity = "working"
             case .needsYou: activity = "needs you"
             case .newReply: activity = "new reply"
             case .lastReply(let ago): activity = "last reply \(ago)"
             case .none: activity = nil
             }
-            let line = [row.title, activity].compactMap { $0 }.joined(separator: " · ")
-            return LimitChoice(chat: summary.chat, label: info.label, line: line, closeFailure: closeFailures[summary.chat])
+            // v0.28 (ZL3): the name, then "Thread 1 · working".
+            let line = [info.label, activity].compactMap { $0 }.joined(separator: " · ")
+            return LimitChoice(
+                chat: summary.chat, label: ThreadName.shown(summary), line: line, closeFailure: closeFailures[summary.chat])
         }
     }
 
     /// The Go button's label: "Go to Thread 2". Buttons, cards and rows
     /// carry no key glyph (§9.2); the tooltip spells the key.
     static func goLabel(label: String) -> String { "Go to \(label)" }
+
+    /// v0.28 (ZK3): Main's cards name the thread in their title, so the button is plain.
+    static let goToThread = "Go to thread"
 
     /// A conversation's key spelled out for a tooltip: "Control-0" for
     /// Main, "Control-1", "Control-2" for the threads (§9.2).
@@ -142,6 +151,31 @@ struct ThreadsPresentation: Equatable {
         return ThreadRowPresentation(
             chat: summary.chat, label: label, title: title, status: status, keyName: Self.keyName(slot: slot),
             closeFailure: closeFailures[summary.chat], slot: slot, isOpen: summary.chat == current, subtitle: title)
+    }
+}
+
+/// What a thread is called (v0.28, PORT-80): its name leads, its number
+/// ("Thread 1") follows. The name is what the person typed, else what the
+/// app wrote from the first message; before anything is sent, "New thread".
+enum ThreadName {
+    static let unnamed = "New thread"
+    /// After the number on an unused thread's second line.
+    static let nothingSent = "nothing sent yet"
+    /// The composer's placeholder in a thread nothing was sent to.
+    static let unusedPlaceholder = "What should this thread work on?"
+    /// The thread's name, `nil` before it has one. A thread the agent
+    /// proposed is named from its brief until its title arrives.
+    static func name(_ summary: ChatSummary) -> String? {
+        SessionPresentation(summary: summary).title ?? summary.thread.flatMap { SessionPresentation.title(from: $0.brief) }
+    }
+
+    /// The name as shown: "New thread" until there is one.
+    static func shown(_ summary: ChatSummary) -> String { name(summary) ?? unnamed }
+
+    /// The row's second line: "Thread 1", or "Thread 1 · nothing sent yet".
+    static func numberLine(_ summary: ChatSummary) -> String? {
+        guard let label = summary.thread?.label else { return nil }
+        return name(summary) == nil ? "\(label) · \(nothingSent)" : label
     }
 }
 
@@ -205,7 +239,9 @@ struct ThreadMenuItem: Equatable, Identifiable {
     static func items(threads: ThreadsPresentation, threadsOn: Bool, agentName: String? = nil) -> [ThreadMenuItem] {
         guard threadsOn else { return [] }
         return [ThreadMenuItem(title: MainLabel.make(agentName: agentName).text, slot: 0)]
-            + threads.open.compactMap { $0.thread.map { ThreadMenuItem(title: $0.label, slot: $0.slot) } }
+            + threads.open.compactMap { summary in
+                summary.thread.map { ThreadMenuItem(title: ThreadName.shown(summary), slot: $0.slot) }
+            }
     }
 }
 
@@ -237,6 +273,8 @@ struct ThreadRowPresentation: Equatable, Identifiable {
     var isOpen: Bool = false
     /// The line under the name: Main's "Session 4 · …", a thread's title.
     var subtitle: String? = nil
+    /// v0.28: a thread's number, "Thread 1": the name is `label` now.
+    var number: String? = nil
     /// v0.26: the agent's name on Main's row ("Wren" in "Wren (Main)"), so
     /// the row can truncate the name and keep "(Main)"; nil on a thread's
     /// row and on a Main with no real name.
@@ -247,8 +285,12 @@ struct ThreadRowPresentation: Equatable, Identifiable {
     /// A thread's row (the branch icon, Close thread in its menu), not Main's.
     var isThread: Bool { slot > 0 }
 
-    /// The row's tooltip: "Go to Thread 2 (Control-2)".
-    var help: String { "Go to \(label) (\(keyName))" }
+    /// The row's tooltip: "Go to Main (Control-0)"; a thread's is its whole
+    /// name, then the number and the key, "Notes app login flow · Thread 2 (Control-2)".
+    var help: String {
+        if let number { return "\(label) · \(number) (\(keyName))" }
+        return "Go to \(label) (\(keyName))"
+    }
 
     /// What VoiceOver reads, without the key glyph: "Thread 2, needs you".
     var spokenLabel: String {
@@ -392,9 +434,9 @@ struct DoneCard: Equatable, Identifiable {
                 !dismissed.contains(summary.chat), !threads.waiting.contains(summary.chat)
             else { return nil }
             return DoneCard(
-                thread: summary.chat, slot: info.slot, title: "\(info.label) is done",
+                thread: summary.chat, slot: info.slot, title: "\(ThreadName.shown(summary)) is done",
                 line: replyLine(in: transcripts[summary.chat] ?? []),
-                goLabel: ThreadsPresentation.goLabel(label: info.label), goHelp: ThreadsPresentation.keyName(slot: info.slot))
+                goLabel: ThreadsPresentation.goToThread, goHelp: "\(info.label) (\(ThreadsPresentation.keyName(slot: info.slot)))")
         }
     }
 
@@ -530,9 +572,9 @@ extension AppModel {
             let hidden = dismissedCalls[summary.chat] ?? []
             guard let card = (openCards[summary.chat] ?? []).first(where: { !hidden.contains($0.id) }) else { return nil }
             return CallingCard(
-                thread: summary.chat, slot: info.slot, cardId: card.id, title: "\(info.label) has a question",
-                line: Self.callingLine(card), goLabel: ThreadsPresentation.goLabel(label: info.label),
-                goHelp: ThreadsPresentation.keyName(slot: info.slot))
+                thread: summary.chat, slot: info.slot, cardId: card.id, title: "\(ThreadName.shown(summary)) has a question",
+                line: Self.callingLine(card), goLabel: ThreadsPresentation.goToThread,
+                goHelp: "\(info.label) (\(ThreadsPresentation.keyName(slot: info.slot)))")
         }
     }
 

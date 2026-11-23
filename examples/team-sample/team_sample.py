@@ -183,21 +183,27 @@ class Sample:
         if entry["direction"] != "in":
             return
         if target.is_file() and digest(target) != entry["hash"]:
-            kept = self.root / MINE_FOLDER / name
-            # Never over a copy already kept there: a saved version, or what an earlier file of this name left.
-            copy_whole(target, self.beside(name) if kept.exists() else kept)
+            self.keep(name, target)
         target.unlink(missing_ok=True)
 
-    def beside(self, name: str) -> Path:
-        """A new place in the kept folder for one more copy of ``name``."""
-        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-        return self.root / MINE_FOLDER / f"{Path(name).stem}.edited-{stamp}{Path(name).suffix}"
+    def keep(self, name: str, from_path: Path) -> Path:
+        """Keep a copy of ``from_path`` in the kept folder and say where.
+
+        The one place that writes there. It never writes over a file: the copy goes to ``<name>`` when that is
+        free, otherwise beside it under a name of its own.
+        """
+        kept = self.root / MINE_FOLDER / name
+        while kept.exists():
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+            kept = self.root / MINE_FOLDER / f"{Path(name).stem}.edited-{stamp}{Path(name).suffix}"
+        copy_whole(from_path, kept)
+        return kept
 
     def keep_edits(self, name: str, entry: dict[str, Any]) -> None:
         """While a file has two versions, the one at its path may be edited too: keep that before it is replaced."""
         target = self.root / entry["path"]
         if target.is_file() and digest(target) != entry["hash"]:
-            copy_whole(target, self.beside(name))
+            self.keep(name, target)
 
     def push(self, name: str, entry: dict[str, Any]) -> None:
         """This Mac's version becomes the team's."""
@@ -237,8 +243,8 @@ class Sample:
                     if entry.get("conflict"):
                         self.keep_edits(name, entry)
                     else:
-                        mine = f"{MINE_FOLDER}/{name}"
-                        copy_whole(self.root / entry["path"], self.root / mine)
+                        # The saved version has a path of its own; ``resolve`` removes that path and no other.
+                        mine = self.keep(name, self.root / entry["path"]).relative_to(self.root).as_posix()
                         entry["conflict"] = {"mine": {"path": mine, "at": now()}}
                     self.pull(name, entry)
                     entry["conflict"]["id"] = f"c-{name}-{remote['rev']}"

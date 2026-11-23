@@ -26,9 +26,34 @@ final class CommentAnchoringTests: XCTestCase {
         XCTAssertEqual(CommentAnchoring.reason(refusal), "Select text within one paragraph, outside links and formatting.")
     }
 
-    func testInsideInlineCodeRefused() {
-        let result = CommentAnchoring.locate(.init(text: "make build", lines: 0...0, occurrence: 0), in: "Run `make build` now.\n")
-        XCTAssertEqual(result, .failure(.insideIgnored))
+    /// v0.28 (PORT-50): inline code can be commented, as a whole. The markers go outside its backticks.
+    func testWholeInlineCodeIsAnchoredOutsideItsBackticks() throws {
+        let source = "Run `make build` now.\n"
+        let r = try CommentAnchoring.locate(.init(text: "make build", lines: 0...0, occurrence: 0), in: source).get()
+        XCTAssertEqual(slice(source, r), "make build")
+        let written = CommentFormat.addThread(source, range: r, id: "ab123", author: "Sam", at: "2026-11-19T10:00:00.000Z", body: "Which?")
+        XCTAssertTrue(written.hasPrefix("Run <!--c:ab123-->`make build`<!--/c:ab123--> now.\n"), written)
+        XCTAssertEqual(CommentFormat.stripMarkers(written).components(separatedBy: "\n")[0], "Run `make build` now.", "the code is untouched")
+        let thread = try XCTUnwrap(CommentFormat.parse(written).threads.first)
+        XCTAssertEqual(thread.quote, "make build")
+        XCTAssertEqual(CommentFormat.anchoredText(written, thread), "`make build`")
+    }
+
+    func testTextAndTheCodeInItAreAnchoredTogether() throws {
+        let source = "Run `make build` now.\n"
+        let r = try CommentAnchoring.locate(.init(text: "Run make build now", lines: 0...0, occurrence: 0), in: source).get()
+        XCTAssertEqual(slice(source, r), "Run `make build` now")
+        let tail = try CommentAnchoring.locate(.init(text: "Run make build", lines: 0...0, occurrence: 0), in: source).get()
+        let written = CommentFormat.addThread(source, range: tail, id: "ab124", author: "Sam", at: "2026-11-19T10:00:00.000Z", body: "x")
+        XCTAssertTrue(written.hasPrefix("<!--c:ab124-->Run `make build`<!--/c:ab124--> now."), written)
+    }
+
+    func testPartOfInlineCodeIsRefusedAndACodeBlockStillIs() {
+        let source = "Run `make build` now.\n\n```\nmake build\n```\n"
+        XCTAssertEqual(
+            CommentAnchoring.locate(.init(text: "make", lines: 0...0, occurrence: 0), in: source), .failure(.insideCodeSpan))
+        XCTAssertEqual(
+            CommentAnchoring.locate(.init(text: "make build", lines: 2...4, occurrence: 0), in: source), .failure(.insideIgnored))
         XCTAssertEqual(CommentAnchoring.reason(.insideIgnored), "Comments can't go in code or front matter.")
     }
 
@@ -113,10 +138,11 @@ final class CommentAnchoringTests: XCTestCase {
         XCTAssertEqual(CommentAnchoring.cellWords, "Select text within one cell.")
     }
 
-    func testInlineCodeInACellIsRefused() throws {
+    func testInlineCodeInACellCanBeCommented() throws {
         let source = try CommentFormatTests.read("table.md")
-        XCTAssertEqual(
-            CommentAnchoring.locate(.init(text: "code", lines: 2...5, occurrence: 0, cell: 1, row: 2), in: source), .failure(.insideIgnored))
+        let r = try CommentAnchoring.locate(.init(text: "code", lines: 2...5, occurrence: 0, cell: 1, row: 2), in: source).get()
+        XCTAssertEqual(slice(source, r), "code")
+        XCTAssertEqual(slice(source, CommentFormat.widenToAutolink(source, r)), "`code`")
     }
 
     func testATableInsideAListItemIsFoundByItsRow() throws {

@@ -256,6 +256,24 @@ final class ViewerCommentsTests: XCTestCase {
         XCTAssertFalse(refused)
     }
 
+    /// v0.28 (PORT-50): in Edit mode a selection inside inline code is anchored around the whole span.
+    func testEditModeAddByRangeInsideInlineCodeTakesTheWholeSpan() async throws {
+        let url = try file("para.md")
+        let c = ViewerComments(defaults: defaults())
+        c.show(file: url)
+        c.helloPersonName = "Sam"
+        let text = "Run `make build` now.\n\n```\nmake build\n```\n"
+        let buffer = FakeBuffer(text)
+        c.editBuffer = buffer
+        let made = CommentWriter.Made()
+        let ok = await c.applyInBuffer(.addRange(10..<15, body: "Which?"), made: made)
+        XCTAssertTrue(ok)
+        XCTAssertTrue(buffer.text.hasPrefix("Run <!--c:\(made.id!)-->`make build`<!--/c:\(made.id!)--> now.\n"), buffer.text)
+        let block = (buffer.text as NSString).range(of: "make build", options: .backwards).location
+        let refused = await c.applyInBuffer(.addRange(block..<(block + 4), body: "x"))
+        XCTAssertFalse(refused, "a code block is still refused")
+    }
+
     func testTextSpliceMinimalUTF16() {
         let s = TextSplice.minimal("a🙂b\nend", "a🙂XYb\nend")
         XCTAssertEqual(s.from, 3)

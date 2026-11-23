@@ -14,9 +14,17 @@ struct MainWindow: View {
     @Environment(\.openSettings) private var openSettings
     /// The width a column had when its divider drag began.
     @State private var dragStart: CGFloat?
-    /// v0.14 (§6b.2): the viewer divider's grip sits on the conversation
-    /// side; the web view would take the half over it.
-    static let viewerDividerGripSide: ColumnDivider.GripSide = .leading
+    /// v0.28: the viewer divider's grip is centred on its line, as the
+    /// sidebar's is. It is an AppKit view over the window (`DividerGrip`),
+    /// so the web view no longer takes the half over it (v0.14 kept the
+    /// whole grip on the conversation side for that reason).
+    static let viewerDividerGripSide: ColumnDivider.GripSide = .centred
+
+    /// Where the viewer divider's grip starts, from the window's left edge:
+    /// the line is the point before the viewer column.
+    static func viewerGripLeading(window: CGFloat, viewer: CGFloat) -> CGFloat {
+        window - viewer - 1 + ColumnDivider.gripSpan(viewerDividerGripSide).lowerBound
+    }
 
     /// How far the conversation's scrollers keep from its right edge: the
     /// viewer grip's reach while the viewer is shown, else nothing (fix I-1).
@@ -47,8 +55,18 @@ struct MainWindow: View {
                 // The shown chat's viewer: the conversation's, or (Y1) the
                 // live session's beside the welcome that continues it.
                 if let viewer = widths.viewer {
-                    ColumnDivider(
-                        gripSide: Self.viewerDividerGripSide,
+                    // The line alone: its grip is the overlay below.
+                    ColumnDivider(grips: false, onDrag: { _ in }, onEnd: {}, onReset: {})
+                    ViewerColumn(chat: model.shownChat)
+                        .frame(width: viewer)
+                        // v0.11 (67): the panel eases in, fading as it slides,
+                        // rather than appearing all at once.
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+            .overlay(alignment: .leading) {
+                if let viewer = widths.viewer {
+                    DividerGrip(
                         onDrag: { dx in
                             // In focus the split is fixed; the widths to come back to stay as they were.
                             guard !focused else { return }
@@ -63,11 +81,8 @@ struct MainWindow: View {
                             guard !focused else { return }
                             settings.setViewerWidth(ColumnWidths.viewerDefault(for: viewerFit), for: viewerFit)
                         })
-                    ViewerColumn(chat: model.shownChat)
-                        .frame(width: viewer)
-                        // v0.11 (67): the panel eases in, fading as it slides,
-                        // rather than appearing all at once.
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                        .frame(width: ColumnDivider.grip)
+                        .padding(.leading, Self.viewerGripLeading(window: geometry.size.width, viewer: viewer))
                 }
             }
         }

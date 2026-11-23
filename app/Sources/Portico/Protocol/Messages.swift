@@ -576,8 +576,11 @@ struct ModelSet: Codable, Equatable, Sendable {
 /// `error` with the `id`. Starting never changes which chat is Main.
 struct ThreadStart: Codable, Equatable, Sendable {
     static let messageType = "thread.start"
+    /// v0.28: the gateway opens a thread without a proposal (the person's own).
+    static let newCapability = "threads.new.v1"
     var chat: Int
-    var proposal: String
+    /// `nil` (v0.28, `threads.new.v1`): the person opens the thread; it starts empty.
+    var proposal: String? = nil
     var close: Int? = nil
     var id: String? = nil
     var ts: String = ProtocolClock.now()
@@ -589,6 +592,27 @@ struct ThreadDismiss: Codable, Equatable, Sendable {
     static let messageType = "thread.dismiss"
     var chat: Int
     var proposal: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Take away the open thread `chat`, which nothing was sent to (v0.28,
+/// `threads.new.v1`): no log step, nothing in History. Answered with
+/// `chat.list`; `thread.used` when something was sent to it.
+struct ThreadDiscard: Codable, Equatable, Sendable {
+    static let messageType = "thread.discard"
+    var chat: Int
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// "Name it for me" (v0.28, `chat.retitle.v1`): the gateway writes the
+/// session's name again from its conversation, clears a typed alias and
+/// answers with `chat.list`; `titles.unavailable` when it cannot.
+struct ChatRetitle: Codable, Equatable, Sendable {
+    static let messageType = "chat.retitle"
+    static let capability = "chat.retitle.v1"
+    var chat: Int
     var id: String? = nil
     var ts: String = ProtocolClock.now()
 }
@@ -2472,6 +2496,8 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case threadStart(ThreadStart)
     case threadDismiss(ThreadDismiss)
     case threadClose(ThreadClose)
+    case threadDiscard(ThreadDiscard)
+    case chatRetitle(ChatRetitle)
     case appCallTool(AppCallTool)
     case appMessage(AppMessage)
     case appContext(AppContext)
@@ -2543,6 +2569,8 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .threadStart: ThreadStart.messageType
         case .threadDismiss: ThreadDismiss.messageType
         case .threadClose: ThreadClose.messageType
+        case .threadDiscard: ThreadDiscard.messageType
+        case .chatRetitle: ChatRetitle.messageType
         case .appCallTool: AppCallTool.messageType
         case .appMessage: AppMessage.messageType
         case .appContext: AppContext.messageType
@@ -2617,6 +2645,8 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case ThreadStart.messageType: self = .threadStart(try ThreadStart(from: decoder))
         case ThreadDismiss.messageType: self = .threadDismiss(try ThreadDismiss(from: decoder))
         case ThreadClose.messageType: self = .threadClose(try ThreadClose(from: decoder))
+        case ThreadDiscard.messageType: self = .threadDiscard(try ThreadDiscard(from: decoder))
+        case ChatRetitle.messageType: self = .chatRetitle(try ChatRetitle(from: decoder))
         case AppCallTool.messageType: self = .appCallTool(try AppCallTool(from: decoder))
         case AppMessage.messageType: self = .appMessage(try AppMessage(from: decoder))
         case AppContext.messageType: self = .appContext(try AppContext(from: decoder))
@@ -2693,6 +2723,8 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .threadStart(let m): try m.encode(to: encoder)
         case .threadDismiss(let m): try m.encode(to: encoder)
         case .threadClose(let m): try m.encode(to: encoder)
+        case .threadDiscard(let m): try m.encode(to: encoder)
+        case .chatRetitle(let m): try m.encode(to: encoder)
         case .appCallTool(let m): try m.encode(to: encoder)
         case .appMessage(let m): try m.encode(to: encoder)
         case .appContext(let m): try m.encode(to: encoder)
@@ -2790,6 +2822,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case teamState(TeamState)
     case teamResult(TeamResult)
     case teamShareDraft(TeamShareDraft)
+    case teamShareCard(TeamShareCard)
 
     var type: String {
         switch self {
@@ -2847,6 +2880,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .teamState: TeamState.messageType
         case .teamResult: TeamResult.messageType
         case .teamShareDraft: TeamShareDraft.messageType
+        case .teamShareCard: TeamShareCard.messageType
         }
     }
 
@@ -2906,6 +2940,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .teamState(let m): m.envelope
         case .teamResult(let m): m.envelope
         case .teamShareDraft(let m): m.envelope
+        case .teamShareCard(let m): m.envelope
         }
     }
 
@@ -2966,6 +3001,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case TeamState.messageType: self = .teamState(try TeamState(from: decoder))
         case TeamResult.messageType: self = .teamResult(try TeamResult(from: decoder))
         case TeamShareDraft.messageType: self = .teamShareDraft(try TeamShareDraft(from: decoder))
+        case TeamShareCard.messageType: self = .teamShareCard(try TeamShareCard(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -3028,6 +3064,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .teamState(let m): try m.encode(to: encoder)
         case .teamResult(let m): try m.encode(to: encoder)
         case .teamShareDraft(let m): try m.encode(to: encoder)
+        case .teamShareCard(let m): try m.encode(to: encoder)
         }
     }
 }

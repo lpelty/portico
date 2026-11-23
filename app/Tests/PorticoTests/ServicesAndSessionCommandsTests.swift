@@ -480,10 +480,10 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
 
     /// v0.11 (65): the card's hint says what the buttons do.
     func testTheSessionCardHintSaysWhatTheButtonsDo() {
-        XCTAssertEqual(AppModel.sessionCardHint(canLogSession: true, offReason: nil), "Log writes it up · New starts fresh")
-        XCTAssertEqual(AppModel.sessionCardHint(canLogSession: false, offReason: nil), "New starts fresh")
+        XCTAssertEqual(AppModel.sessionCardHint(canLogSession: true, offReason: nil), "Log writes it up · New session starts fresh")
+        XCTAssertEqual(AppModel.sessionCardHint(canLogSession: false, offReason: nil), "New session starts fresh")
         XCTAssertEqual(AppModel.sessionCardHint(canLogSession: false, offReason: AppModel.noLogStep),
-            "No log step is set up for this agent, so Log session is off. New starts fresh.")
+            "No log step is set up for this agent, so Log session is off. New session starts fresh.")
         XCTAssertEqual(AppModel.sessionCardHint(canLogSession: false, offReason: AppModel.logsOnlyOnRenewal),
             AppModel.logsOnlyOnRenewal)
     }

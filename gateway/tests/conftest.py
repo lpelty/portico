@@ -17,12 +17,21 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from claude_agent_sdk import ResultMessage
+from claude_agent_sdk import ResultMessage, UserMessage
 
 from portico_gateway.agents import AgentTracker
 from portico_gateway.config import Config
 from portico_gateway import server as server_mod
-from portico_gateway.engine import EngineCallbacks, PermissionDecision, QuestionDeclined, TurnErrors, opens_turn, translate
+from portico_gateway.engine import (
+    EngineCallbacks,
+    PermissionDecision,
+    QuestionDeclined,
+    TurnErrors,
+    opens_turn,
+    peer_message,
+    peer_notice,
+    translate,
+)
 from portico_gateway.messages import Action, AgentCommand, Brand, ModelChoice, Root, ServerMessage, TurnFinished, TurnStarted
 from portico_gateway.mcp_inventory import CliResult, invalidate_plugin_cache
 from portico_gateway.state import StateDir
@@ -305,15 +314,24 @@ class FakeEngine:
                     await cb.on_event(ev)
                 return
             else:
-                if 0 < self.turn <= self.finished_turn and opens_turn(item):
+                # v0.28: a peer's message begins a turn too, as in the real adapter.
+                peer = peer_message(item.content) if isinstance(item, UserMessage) and item.parent_tool_use_id is None else None
+                idle = self.turn <= self.finished_turn
+                if (0 < self.turn and idle and opens_turn(item)) or (peer is not None and idle):
                     self.turn += 1
                     self.errors.reset()
                     await cb.on_event(TurnStarted(ts="2026-10-29T12:00:00Z", chat=self.chat, turn=self.turn))
+                if peer is not None:
+                    await cb.on_event(peer_notice(peer, self.chat, "2026-10-29T12:00:00Z", getattr(cb, "peer_label", None)))
                 self.errors.note(item)
                 for ev in translate(item, self.chat, self.turn, self.agents):
                     if isinstance(ev, TurnFinished):
                         self.finished_turn = ev.turn
                     await cb.on_event(self.errors.attach(ev))
+
+    async def arrive(self, *items: Any) -> None:
+        """Messages the engine produces with no ``send`` (v0.28: a peer's message and the reply to it)."""
+        await self._run(list(items))
 
     async def inject(self, text: str, images: list[dict[str, Any]] | None = None) -> None:
         """A message written into the turn in flight (v0.11): recorded; the script goes on as it was."""

@@ -1186,7 +1186,7 @@
     "quote": "code",
     "occurrence": 1
    },
-   "expect_refusal": "inside code or front matter"
+   "expect_prefix": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a \\| b | 10 |\n| beta | `"
   },
   {
    "name": "find-table-alignment-row",
@@ -1861,6 +1861,127 @@
     }
    },
    "expect_error": "blank"
+  },
+  {
+   "name": "find-inline-code-whole",
+   "text": "Run `make test` now, then ` x ` and ``a`b``.\n",
+   "find": {
+    "quote": "make test",
+    "occurrence": 1
+   },
+   "expect_prefix": "Run `"
+  },
+  {
+   "name": "find-inline-code-part",
+   "text": "Run `make test` now, then ` x ` and ``a`b``.\n",
+   "find": {
+    "quote": "make",
+    "occurrence": 1
+   },
+   "expect_refusal": "inside inline code"
+  },
+  {
+   "name": "find-inline-code-end-inside",
+   "text": "Run `make test` now, then ` x ` and ``a`b``.\n",
+   "find": {
+    "quote": "test now",
+    "occurrence": 1
+   },
+   "expect_refusal": "inside inline code"
+  },
+  {
+   "name": "find-across-inline-code",
+   "text": "Run `make test` now, then ` x ` and ``a`b``.\n",
+   "find": {
+    "quote": "Run make test now",
+    "occurrence": 1
+   },
+   "expect_prefix": "",
+   "expect_text": "Run `make test` now"
+  },
+  {
+   "name": "find-inline-code-padded",
+   "text": "Run `make test` now, then ` x ` and ``a`b``.\n",
+   "find": {
+    "quote": "then x and",
+    "occurrence": 1
+   },
+   "expect_prefix": "Run `make test` now, ",
+   "expect_text": "then ` x ` and"
+  },
+  {
+   "name": "find-inline-code-double-backticks",
+   "text": "Run `make test` now, then ` x ` and ``a`b``.\n",
+   "find": {
+    "quote": "a`b",
+    "occurrence": 1
+   },
+   "expect_prefix": "Run `make test` now, then ` x ` and ``"
+  },
+  {
+   "name": "find-inline-code-link-is-code",
+   "text": "`https://alpha.com` text\n",
+   "find": {
+    "quote": "https://alpha.com",
+    "occurrence": 1
+   },
+   "expect_prefix": "`"
+  },
+  {
+   "name": "find-inline-code-link-part",
+   "text": "`https://alpha.com` text\n",
+   "find": {
+    "quote": "alpha",
+    "occurrence": 1
+   },
+   "expect_refusal": "inside inline code"
+  },
+  {
+   "name": "find-inline-code-marker-is-code",
+   "text": "Write `<!--c:abcde-->` first.\n",
+   "find": {
+    "quote": "<!--c:abcde-->",
+    "occurrence": 1
+   },
+   "expect_prefix": "Write `",
+   "expect_text": "<!--c:abcde-->"
+  },
+  {
+   "name": "find-fenced-code-refused",
+   "text": "```\nmake test\n```\n\nPara\n",
+   "find": {
+    "quote": "make test",
+    "occurrence": 1
+   },
+   "expect_refusal": "inside code or front matter"
+  },
+  {
+   "name": "add-inline-code",
+   "file": "inline-code.md",
+   "op": "add",
+   "args": {
+    "quote": "make test",
+    "id": "ic101",
+    "author": "Sam Rivera",
+    "at": "2026-11-19T10:00:00.000Z",
+    "body": "Which target?"
+   },
+   "expect": "inline-code.add.after.md",
+   "expect_link": "`make test`"
+  },
+  {
+   "name": "add-inline-code-in-cell",
+   "file": "inline-code.md",
+   "op": "add",
+   "args": {
+    "quote": "code",
+    "id": "ic102",
+    "author": "Sam Rivera",
+    "at": "2026-11-19T10:00:00.000Z",
+    "body": "Rename it."
+   },
+   "expect": "inline-code-cell.add.after.md",
+   "expect_link": "`code`"
   }
  ]
 }

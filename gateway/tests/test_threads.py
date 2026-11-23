@@ -44,6 +44,7 @@ from portico_gateway.messages import (
     SessionRenew,
     SessionRenewed,
     ThreadClose,
+    ThreadDiscard,
     ThreadDismiss,
     ThreadInfo,
     ThreadProposal,
@@ -1037,5 +1038,137 @@ async def test_a_brief_that_cannot_go_is_said_in_the_thread(
         assert got[-1].text == f"The brief wasn't sent: attachment does not exist: {gone}"  # type: ignore[attr-defined]
         assert [type(m) for m in got] == [ChatState, ChatList, ThreadProposal, ChatNotice]
         assert got[0].id == "req-s", "the request is answered once, by chat.state"  # type: ignore[attr-defined]
+    finally:
+        await conn.close()
+
+
+# --- v0.28: the person opens a thread themselves (threads.new.v1) ---------------------
+
+
+async def open_own(conn: ClientConnection, main: int, id: str = "req-o", close: int | None = None) -> list[ServerMessage]:
+    """``thread.start`` with no proposal, up to the ``chat.list`` that shows the new thread."""
+    await conn.send(dump(ThreadStart(ts=TS, id=id, chat=main, close=close)))
+    return await recv_until(conn, ChatList, timeout=10)
+
+
+def test_the_gateway_offers_opening_a_thread_wherever_it_offers_threads(tmp_path: Path) -> None:
+    single = hello_for(make_config(presentation="single"), "e", "0.28.0")
+    assert "threads.v1" in single.capabilities and "threads.new.v1" in single.capabilities
+    off = hello_for(make_config(presentation="single", threads={"max": 0}), "e", "0.28.0")
+    assert "threads.new.v1" not in off.capabilities
+    assert "threads.new.v1" not in hello_for(make_config(presentation="multiple"), "e", "0.28.0").capabilities
+    assert thread_prompt(1, "") == (
+        "This is Thread 1, a conversation the person opened beside their main one. It starts fresh: nothing "
+        "from the main conversation is here. The person says what it is for and answers here."
+    )
+    assert thread_prompt(1, BRIEF) == thread_prompt(1)
+
+
+async def test_the_person_opens_an_empty_thread(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, servers: list[GatewayServer]
+) -> None:
+    srv = await threads_server(state_dir, factory, servers)
+    conn = await attach_threads(srv)
+    try:
+        main = await new_chat(conn, folder)
+        engines = len(factory.engines)
+        got = await open_own(conn, main)
+        state, listing = got[0], got[-1]
+        assert isinstance(state, ChatState) and state.state == "idle" and state.id == "req-o"
+        thread = srv.registry.get(state.chat)
+        assert thread.thread is not None and thread.thread.slot == 1 and thread.thread.parent == main
+        assert thread.thread.brief == "" and thread.thread.files == [] and thread.title is None
+        assert isinstance(listing, ChatList) and state.chat in [c.chat for c in listing.chats]
+        assert not [m for m in got if isinstance(m, ThreadProposal)], "no proposal is involved"
+        assert len(factory.engines) == engines, "nothing is sent: no engine, no first message"
+        assert srv.registry.main() is srv.registry.get(main)
+
+        # Its first message names it at once (the first line), and its agent hears the plain prompt.
+        await conn.send(dump(MessageSend(ts=TS, chat=thread.number, text="Draft the onboarding copy\nfor new accounts")))
+        got = await recv_until(conn, TurnFinished)
+        assert thread.title == "Draft the onboarding copy"
+        assert [c.title for m in got if isinstance(m, ChatList) for c in m.chats if c.chat == thread.number] == [
+            "Draft the onboarding copy"
+        ], "the list hears a thread's name with its first message"
+        options = build_options(folder, None, [], factory.last.callbacks, system_prompt=factory.last.system_prompt)  # type: ignore[arg-type]
+        assert thread_prompt(1, "") in options.system_prompt["append"]  # type: ignore[index]
+        sends = [arg for call, arg in factory.last.calls if call == "send"]
+        assert sends == ["Draft the onboarding copy\nfor new accounts"], "none of Main's conversation, no brief"
+    finally:
+        await conn.close()
+
+
+async def test_opening_a_thread_is_only_from_main(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, servers: list[GatewayServer]
+) -> None:
+    srv = await threads_server(state_dir, factory, servers)
+    conn = await attach_threads(srv)
+    try:
+        main = await new_chat(conn, folder)
+        first = (await open_own(conn, main))[0]
+        await conn.send(dump(ThreadStart(ts=TS, id="req-x", chat=first.chat)))  # type: ignore[union-attr]
+        err = await recv(conn)
+        assert isinstance(err, Error) and err.code == "thread.not_main" and err.id == "req-x"
+    finally:
+        await conn.close()
+
+
+async def test_an_unused_thread_is_discarded_and_frees_its_slot(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, servers: list[GatewayServer]
+) -> None:
+    srv = await threads_server(state_dir, factory, servers, log_prompt=LOG)
+    conn = await attach_threads(srv)
+    try:
+        main = await new_chat(conn, folder)
+        one = (await open_own(conn, main, id="req-1"))[0].chat  # type: ignore[union-attr]
+        two = (await open_own(conn, main, id="req-2"))[0].chat  # type: ignore[union-attr]
+        await conn.send(dump(ThreadStart(ts=TS, id="req-3", chat=main)))
+        err = await recv(conn)
+        assert isinstance(err, Error) and err.code == "thread.limit"
+
+        await conn.send(dump(ThreadDiscard(ts=TS, id="req-d", chat=two)))
+        listing = await recv(conn)
+        assert isinstance(listing, ChatList) and two not in [c.chat for c in listing.chats], "gone, not in History"
+        assert two not in srv.registry and [t.number for t in srv.registry.open_threads()] == [one]
+        assert not [call for e in factory.engines for call, arg in e.calls if arg == LOG], "no log step ran"
+        third = (await open_own(conn, main, id="req-4"))[0]
+        assert isinstance(third, ChatState) and srv.registry.get(third.chat).thread.slot == 2  # type: ignore[union-attr]
+
+        # A thread something was sent to is not discarded: it closes.
+        await conn.send(dump(MessageSend(ts=TS, chat=one, text="Draft the onboarding copy")))
+        await recv_until(conn, TurnFinished)
+        await recv(conn)
+        await conn.send(dump(ThreadDiscard(ts=TS, id="req-e", chat=one)))
+        got = await recv_until(conn, Error)
+        err = got[-1]
+        assert isinstance(err, Error) and err.code == "thread.used" and err.id == "req-e"
+        assert one in srv.registry
+        await conn.send(dump(ThreadDiscard(ts=TS, id="req-f", chat=main)))
+        err = (await recv_until(conn, Error))[-1]
+        assert isinstance(err, Error) and err.code == "thread.not_open"
+    finally:
+        await conn.close()
+
+
+async def test_at_the_limit_the_persons_thread_opens_after_one_is_closed(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, servers: list[GatewayServer]
+) -> None:
+    srv = await threads_server(state_dir, factory, servers)
+    conn = await attach_threads(srv)
+    try:
+        main = await new_chat(conn, folder)
+        one = (await open_own(conn, main, id="req-1"))[0].chat  # type: ignore[union-attr]
+        await open_own(conn, main, id="req-2")
+        await conn.send(dump(MessageSend(ts=TS, chat=one, text="Draft the onboarding copy")))
+        await recv_until(conn, TurnFinished)
+        await recv(conn)
+        await conn.send(dump(ThreadStart(ts=TS, id="req-3", chat=main, close=one)))
+        got: list[ServerMessage] = []
+        while not any(isinstance(m, ChatState) and m.id == "req-3" for m in got):
+            got.append(await recv(conn, timeout=10))
+        assert thread_notices(got, one) == ["Close — closing this thread", "Thread closed"]
+        assert srv.registry.get(one).ended is not None, "the closed thread is in History"
+        new = [m for m in got if isinstance(m, ChatState) and m.id == "req-3"][0]
+        assert srv.registry.get(new.chat).thread.slot == 1  # type: ignore[union-attr]
     finally:
         await conn.close()

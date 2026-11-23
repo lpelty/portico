@@ -65,8 +65,8 @@ extension MarkerSlot.Style {
 enum ConversationMarkers {
     /// Fewer person messages than this: no rail.
     static let minimumCount = 3
-    /// Drawn marks are this far apart.
-    static let spacing: CGFloat = 8
+    /// Drawn marks are this far apart (8 pt until v0.28: further apart, each is easier to land on).
+    static let spacing: CGFloat = 12
     /// The stack thins out once it would be taller than this share of the chat's height.
     static let maximumShare: CGFloat = 0.4
     static let thickness: CGFloat = 2

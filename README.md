@@ -232,7 +232,10 @@ off) are open besides Main. ⌃0 is Main, ⌃1 and ⌃2 the threads, and the
 sidebar lists them with their state. A thread needing an answer shows a
 calling card in Main. Closing a thread writes a summary through the log
 step to History; a thread never renews. A thread takes the brief, not
-Main's conversation. Threads need `presentation = "single"` and an app that
+Main's conversation. Since v0.28 Main and its threads can message each other
+(one says a file is taken, or hands something over when asked): a send waits
+for a yes on a card unless `[threads] messages = "allow"`, and the receiving
+conversation shows "Message from Main: …" before its reply. Threads need `presentation = "single"` and an app that
 announces `threads.v1` (see `protocol/PROTOCOL.md`, Threads). ⌃1 and ⌃2 can
 be taken by macOS if the "Switch to Desktop N" shortcuts are on (Mission
 Control).

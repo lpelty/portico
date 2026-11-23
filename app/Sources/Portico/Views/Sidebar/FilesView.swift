@@ -225,7 +225,9 @@ struct FileTree: View {
                 // header (v0.22.1): a plain list draws its own lighter fill
                 // around a header and a line under it, whatever the header
                 // asks for.
+                let folded = model.isRootFolded(chat: chat, root: root.name)
                 Section {
+                    HStack(spacing: 6) {
                     Label {
                         Text(root.name)
                             .scaledFont(Self.headerSize, weight: .semibold)
@@ -236,11 +238,24 @@ struct FileTree: View {
                     }
                     .foregroundStyle(Theme.text2)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    // v0.28: the name row folds its folder. A folder row's chevron, at the row's
+                    // trailing edge so the name stays where it was.
+                    Image(systemName: folded ? "chevron.right" : "chevron.down")
+                        .font(Theme.iconFont(9, weight: .semibold))
+                        .foregroundStyle(Theme.text3)
+                        .frame(width: FileRow.disclosureWidth)
+                    }
                     .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                    .onTapGesture { model.toggleRoot(chat: chat, root: root.name) }
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityValue(folded ? "Folded" : "Open")
                     .tip(root.path)
                     .solidRow()
-                    ForEach(lines(root: root.name, path: "", depth: 0)) { line in
-                        row(line).solidRow()
+                    if !folded {
+                        ForEach(lines(root: root.name, path: "", depth: 0)) { line in
+                            row(line).solidRow()
+                        }
                     }
                 }
                 .listSectionSeparator(.hidden)

@@ -2,6 +2,37 @@ import SwiftUI
 
 // MARK: - Threads in the conversation (v0.16, AM1–AM4)
 
+/// The conversation of a thread the person just opened (v0.28, ZL2): the
+/// branch, "New thread", and what it is: fresh, nothing of Main's, named
+/// from the first message.
+struct NewThreadIntro: View {
+    static let heading = ThreadName.unnamed
+    static let line =
+        "It starts fresh and does not carry Main's conversation. Say what it is for, "
+        + "or drop a file. It takes its name from your first message."
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "arrow.triangle.branch")
+                .font(Theme.iconFont(20))
+                .foregroundStyle(Theme.text2)
+                .accessibilityHidden(true)
+            Text(Self.heading)
+                .scaledFont(17, weight: .semibold)
+                .foregroundStyle(Theme.text)
+            Text(Self.line)
+                .scaledFont(13)
+                .foregroundStyle(Theme.text2)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 460)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 120)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 /// A thread's first message, drawn as its brief (AM3): "BRIEF FROM MAIN ·
 /// 2:05 PM", the brief, and the files it started with.
 struct BriefBlock: View {

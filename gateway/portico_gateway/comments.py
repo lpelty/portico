@@ -20,7 +20,7 @@ from __future__ import annotations
 import random
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 ID_RE = r"[a-z0-9]{5,8}"
@@ -400,6 +400,7 @@ class _Regions:
     blocks: list  # thread blocks
     segs: list  # top-level blocks
     tables: list  # (header line, delimiter line, last row line)
+    spans: list = field(default_factory=list)  # inline code spans, backticks included (also in ``ignored``)
 
 
 def _regions(text: str) -> _Regions:
@@ -427,8 +428,29 @@ def _regions(text: str) -> _Regions:
         pos = max(pos, b)
     if pos < len(text):
         segments.append((pos, len(text)))
-    ignored = sorted(coarse + _code_spans(text, segments))
-    return _Regions(lines, ignored, blocks, segs, tables)
+    spans = _code_spans(text, segments)
+    ignored = sorted(coarse + spans)
+    return _Regions(lines, ignored, blocks, segs, tables, spans)
+
+
+def _span_parts(text: str, span: tuple[int, int]) -> tuple[int, int, int, int]:
+    """An inline code span's parts: ``(content start, content end, shown start, shown end)``. The
+    content is what lies between the backtick runs; the shown part leaves out the whitespace at its
+    ends (v0.28: a quote of the whole code is anchored around the span, outside its backticks)."""
+    a, b = span
+    n = a
+    while n < b and text[n] == "`":
+        n += 1
+    run = n - a
+    ca, cb = a + run, b - run
+    ia, ib = ca, cb
+    while ia < ib and text[ia] in _WS:
+        ia += 1
+    while ib > ia and text[ib - 1] in _WS:
+        ib -= 1
+    if ia == ib:
+        ia, ib = ca, cb
+    return ca, cb, ia, ib
 
 
 # --- escaping -------------------------------------------------------------------
@@ -849,11 +871,21 @@ def _visible(text: str):
             extra = _row_cells(text[s:e])[columns:]
             if extra:
                 dropped.append((s + extra[0][0], s + extra[-1][1]))
+    # v0.28: inline code is text a reader sees. Its backticks are zero-width, and so is the one
+    # space CommonMark drops from each end of a span that begins and ends with one.
+    span_set = set(reg.spans)
+    block_code = [r for r in reg.ignored if r not in span_set]
+    for span in reg.spans:
+        ca, cb, ia, ib = _span_parts(text, span)
+        zero += [(span[0], ca), (cb, span[1])]
+        if cb - ca >= 2 and text[ca] in " \n" and text[cb - 1] in " \n" and ia > ca and ib < cb:
+            zero += [(ca, ca + 1), (cb - 1, cb)]
     for m in re.finditer(r"\\\|", text):
-        if not _inside(reg.ignored, m.start()):
+        if not _inside(block_code, m.start()):
             zero.append((m.start(), m.start() + 1))
     walls.sort()
-    markers = sorted([(m.start(), m.end()) for m in _MARKER_RE.finditer(text)] + zero)
+    # A marker inside code is the code's own text, not a marker.
+    markers = sorted([(m.start(), m.end()) for m in _MARKER_RE.finditer(text) if not _inside(reg.ignored, m.start())] + zero)
     # Line breaks that end a top-level block: the space they become is a paragraph break.
     seg_ends = {lines[s[2]][1] for s in reg.segs}
     chars: list[str] = []
@@ -869,7 +901,7 @@ def _visible(text: str):
     for a, b in walls:
         if a not in wall_at or wall_at[a] < b:
             wall_at[a] = b
-    ig = reg.ignored
+    ig = block_code
 
     def space(i: int, brk: bool) -> None:
         if chars and chars[-1] == " ":
@@ -935,12 +967,14 @@ _BARE_URL_RE = re.compile(r"(?:https?://|www\.)[^ \t\n\r\f\x0b<\]]*")
 _URL_TRAILING = ".,:;!?)]'\""
 _ENTITY_RE = re.compile(r"&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6});")
 INSIDE_ATOM = "inside a link or entity"
+INSIDE_CODE_SPAN = "inside inline code"
 
 
 def _atoms(text: str) -> list[tuple[int, int, int, int]]:
     """Autolinks (brackets included), bare URLs and HTML entities, as source spans: ``(start, end,
     inner start, inner end)``. An autolink's inner span is its address, without the brackets."""
     out: list[tuple[int, int, int, int]] = []
+    spans = _regions(text).spans
     for pattern in (_AUTOLINK_RE, _EMAIL_AUTOLINK_RE):
         out += [(m.start(), m.end(), m.start() + 1, m.end() - 1) for m in pattern.finditer(text)]
     autolinks = list(out)
@@ -953,7 +987,19 @@ def _atoms(text: str) -> list[tuple[int, int, int, int]]:
         if end > m.start():
             out.append((m.start(), end, m.start(), end))
     out += [(m.start(), m.end(), m.start(), m.end()) for m in _ENTITY_RE.finditer(text)]
-    return sorted(out)
+    # v0.28: in inline code a link or an entity is the code's own text; the span itself is the atom.
+    out = [atom for atom in out if not _inside(spans, atom[0])]
+    return sorted(out + _code_atoms(text, spans))
+
+
+def _code_atoms(text: str, spans) -> list[tuple[int, int, int, int]]:
+    """Inline code spans as atoms: the whole span with its backticks, and the code a quote may
+    cover in its place."""
+    out = []
+    for span in spans:
+        _, _, ia, ib = _span_parts(text, span)
+        out.append((span[0], span[1], ia, ib))
+    return out
 
 
 def _splits_atom(atoms: list[tuple[int, int, int, int]], span: tuple[int, int]) -> bool:
@@ -972,15 +1018,17 @@ def _normalise(q: str) -> str:
 
 
 def _matches(text: str, quote: str, within: tuple[int, int] | None = None):
-    """Matches of ``quote`` in the visible text: (good spans, each with whether it splits a link or
-    entity, any in code, any across paragraphs, any not shown)."""
+    """Matches of ``quote`` in the visible text: (good spans, each with why it can't be anchored
+    (it splits a link, an entity or inline code) or None, any in code, any across paragraphs, any
+    not shown)."""
     q = _normalise(quote)
-    good: list[tuple[tuple[int, int], bool]] = []
+    good: list[tuple[tuple[int, int], str | None]] = []
     in_code = crosses = not_shown = False
     if not q:
         return good, in_code, crosses, not_shown
     vis, src, code, breaks, dropped = _visible(text)
     atoms = _atoms(text)
+    code_atoms = set(_code_atoms(text, _regions(text).spans))
     i = vis.find(q)
     while i >= 0:
         j = i + len(q)
@@ -994,7 +1042,11 @@ def _matches(text: str, quote: str, within: tuple[int, int] | None = None):
         elif any(breaks[i:j]):
             crosses = True
         else:
-            good.append((span, _splits_atom(atoms, span)))
+            split = [atom for atom in atoms if _splits_atom([atom], span)]
+            reason = None
+            if split:
+                reason = INSIDE_ATOM if any(atom not in code_atoms for atom in split) else INSIDE_CODE_SPAN
+            good.append((span, reason))
         i = vis.find(q, j)
     return good, in_code, crosses, not_shown
 
@@ -1004,10 +1056,10 @@ def find_quote(text: str, quote: str, occurrence: int = 1) -> tuple[int, int] | 
     clusters (never split, never widened to words), or a refusal reason."""
     good, in_code, crosses, not_shown = _matches(text, quote)
     if 1 <= occurrence <= len(good):
-        (a, b), splits = good[occurrence - 1]
-        if splits:
+        (a, b), reason = good[occurrence - 1]
+        if reason:
             # Refused, not widened (ruling 22): widening would change the quote the fingerprint holds.
-            return INSIDE_ATOM
+            return reason
         return snap_to_graphemes(text, a, b)
     if good:
         return f"occurs {len(good)} times"

@@ -43,21 +43,23 @@ final class ConversationMarkersTests: XCTestCase {
         XCTAssertTrue(ConversationMarkers.shown(count: 3))
     }
 
-    /// A tight stack, 8 pt apart, centred on the chat's height (Larry's reference).
+    /// A tight stack, 12 pt apart since v0.28 (8 pt before), centred on the chat's height.
     func testMarksAreATightStackCentred() {
         let s = ConversationMarkers.slots(count: 5, height: 424, inView: [], hovered: nil)
-        XCTAssertEqual(s.map(\.y), [196, 204, 212, 220, 228])
+        XCTAssertEqual(s.map(\.y), [188, 200, 212, 224, 236])
         XCTAssertTrue(s.allSatisfy(\.drawn))
     }
 
     /// Past 40% of the height (169.6 pt at 424): every other, then every fourth …
     func testThinningEveryOtherThenEveryFourth() {
-        XCTAssertEqual(ConversationMarkers.stride(count: 20, height: 424), 1)   // 152 pt
-        XCTAssertEqual(ConversationMarkers.stride(count: 30, height: 424), 2)   // 232 → 112
+        XCTAssertEqual(ConversationMarkers.spacing, 12)
+        XCTAssertEqual(ConversationMarkers.stride(count: 15, height: 424), 1)   // 168 pt
+        XCTAssertEqual(ConversationMarkers.stride(count: 16, height: 424), 2)   // 180 → 84
+        XCTAssertEqual(ConversationMarkers.stride(count: 30, height: 424), 2)   // 348 → 168
         XCTAssertEqual(ConversationMarkers.stride(count: 50, height: 424), 4)
         XCTAssertEqual(ConversationMarkers.stride(count: 100, height: 424), 8)
         let s = ConversationMarkers.slots(count: 50, height: 424, inView: [], hovered: nil).filter(\.drawn)
-        for (a, b) in zip(s, s.dropFirst()) { XCTAssertEqual(b.y - a.y, 8, accuracy: 0.001) }
+        for (a, b) in zip(s, s.dropFirst()) { XCTAssertEqual(b.y - a.y, ConversationMarkers.spacing, accuracy: 0.001) }
         XCTAssertLessThanOrEqual(s.last!.y - s.first!.y, 424 * 0.4)
         XCTAssertEqual((s.first!.y + s.last!.y) / 2, 212, accuracy: 8)
     }

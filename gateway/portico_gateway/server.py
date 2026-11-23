@@ -143,6 +143,7 @@ wound down: nothing held goes on its own after a stop (Larry, 10-30).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import http
 import json
 import logging
@@ -230,6 +231,7 @@ from .messages import (
     CardAnswered,
     CardAsk,
     ChatAlias,
+    ChatRetitle,
     ChatCommands,
     ChatCompacted,
     ChatHistory,
@@ -306,6 +308,7 @@ from .messages import (
     TeamSendingSet,
     TeamSendNow,
     TeamShareCancel,
+    TeamShareCard,
     TeamShareDraft,
     TeamSharePrepare,
     TeamShareSend,
@@ -325,6 +328,7 @@ from .messages import (
     StatusSet,
     TextDelta,
     ThreadClose,
+    ThreadDiscard,
     ThreadDismiss,
     ThreadInfo,
     ThreadProposal,
@@ -343,7 +347,7 @@ from .plugins import Plugins, RenewContext
 from .search import Runner, clean_hits, run_command, search_files
 from .services import ServiceMonitor, command_restart, command_status, hook_restart, hook_status
 from .session_numbers import NEXT_NUMBER_TIMEOUT, next_session_number
-from .state import PromptRecord, ProposalRecord, QuestionOutcome, StateDir
+from .state import PromptRecord, ProposalRecord, QuestionOutcome, ShareCardRecord, StateDir
 from .threads import (
     CLOSE_LOGGING,
     CLOSE_PLAIN,
@@ -351,8 +355,15 @@ from .threads import (
     EMPTY_BRIEF,
     limit_message,
     MAIN_PROMPT,
+    peer_label,
+    peer_name,
+    peers_prompt,
     BRIEF_NOT_SENT,
     RENEW_MESSAGE,
+    SHARE_OFFERED,
+    SHARE_REFUSAL_PREFIX,
+    NO_NAME_MESSAGE,
+    USED_MESSAGE,
     not_a_file,
     proposed_text,
     thread_label,
@@ -659,7 +670,7 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
             msg = msg.model_copy(
                 update={"services": [s.model_copy(update={"state": "down"}) if s.state == "stuck" else s for s in msg.services]}
             )
-    if isinstance(msg, (TeamState, TeamResult, TeamShareDraft)) and TEAM_CAPABILITY not in capabilities:
+    if isinstance(msg, (TeamState, TeamResult, TeamShareDraft, TeamShareCard)) and TEAM_CAPABILITY not in capabilities:
         return None
     if isinstance(msg, SpacesList) and SPACES_CAPABILITY not in capabilities:
         return None  # v0.12: an app that did not declare spaces.v1 cannot decode spaces.list
@@ -724,6 +735,9 @@ class TurnRun:
     title_message: str | None = None
     first_line_title: str | None = None
     reply: str = ""
+    # v0.28: what the person sent for this turn, whichever turn it is: with
+    # ``reply``, what "Name it for me" (``chat.retitle``) writes a name from.
+    message: str | None = None
     # v0.26 (review L2): when the turn began, as epoch seconds (``_begin_turn``): a
     # sign-in wait after it fails counts a token written from then on.
     started_epoch: float | None = None
@@ -735,6 +749,14 @@ class ChatCallbacks:
     def __init__(self, server: GatewayServer, chat: Chat) -> None:
         self.server = server
         self.chat = chat
+        # v0.28 (PORT-38): this chat's peer name while threads are on (``_start_engine`` sets it),
+        # and whether a message to another session asks first (``[threads] messages``).
+        self.peer_name: str | None = None
+        self.peer_send: str = server.config.threads.messages
+
+    def peer_label(self, name: str) -> str:
+        """A peer name as the person reads it: "Main", "Thread 2", or the name of another session."""
+        return peer_label(name, self.chat.folder.name)
 
     async def on_event(self, event: ServerMessage) -> None:
         await self.server.engine_event(self.chat, event)
@@ -752,6 +774,31 @@ class ChatCallbacks:
 
     async def on_show(self, paths: list[str]) -> str | Shown | None:
         return await self.server.show_files(self.chat, paths)
+
+    # v0.28: ``share_with_team``. The tool's handler is not told its ``tool_use_id``; the
+    # ``PreToolUse`` hook hears it first with the call's input, as for ``open_thread``.
+    SHARE_USES_KEPT = 20
+
+    @property
+    def shares_with_team(self) -> bool:
+        """Whether this chat's agent gets ``share_with_team``: the deployment has team knowledge."""
+        return self.server.team.active
+
+    def note_share_use(self, tool_use_id: str, tool_input: dict[str, Any]) -> None:
+        uses: list[tuple[tuple[str, tuple[str, ...]], str]] = getattr(self, "_share_uses", [])
+        key = use_key(tool_input.get("note"), tool_input.get("files"))
+        self._share_uses = [*uses, (key, tool_use_id)][-self.SHARE_USES_KEPT :]
+
+    async def on_share_with_team(self, files: list[str], note: str) -> str:
+        uses: list[tuple[tuple[str, tuple[str, ...]], str]] = getattr(self, "_share_uses", [])
+        key = use_key(note, files)
+        use = None
+        for i, (noted, id) in enumerate(uses):
+            if noted == key:
+                use = id
+                del uses[i]
+                break
+        return await self.server.propose_share(self.chat, files, note, use)
 
     @property
     def viewer_bridge(self) -> ViewerBridge:
@@ -1094,6 +1141,8 @@ class GatewayServer:
         self.engine_factory = engine_factory
         self.version = version
         self.epoch = str(uuid.uuid4())
+        # v0.28 (PORT-38): this launch's part of its engines' peer names.
+        self.peer_token = self.epoch[:4]
         self.token: str | None = None
         self.port = 0
         self._server: Server | None = None
@@ -1274,6 +1323,8 @@ class GatewayServer:
         self.register("thread.start", self.on_thread_start)
         self.register("thread.dismiss", self.on_thread_dismiss)
         self.register("thread.close", self.on_thread_close)
+        self.register("thread.discard", self.on_thread_discard)
+        self.register("chat.retitle", self.on_chat_retitle)
         # v0.18 §3.1: MCP servers in Settings (``mcp.v1``). ``tool_policy`` is the person's
         # per-tool choice (ruling 10), read by ``ask_permission`` and by MCP Apps' calls.
         self.tool_policy = ToolPolicy.load(state)
@@ -1375,6 +1426,8 @@ class GatewayServer:
             self._spawn(self._watch_updates(), name="portico-update-check")
         if self.services.active:
             self._spawn(self.services.run(), name="portico-services")
+        # v0.28: a share card still a draft belongs to a draft the last run held: it is cancelled.
+        self.registry.cancel_draft_share_cards()
         if self.team.active:
             self._spawn(self.team.run(), name="portico-team")
         if self.spaces_watcher is not None:
@@ -1949,10 +2002,17 @@ class GatewayServer:
         prompt = chosen.prompt
         callbacks = ChatCallbacks(self, chat)
         if chat.thread is not None:
-            prompt = append_prompt_line(prompt, thread_prompt(chat.thread.slot))
+            prompt = append_prompt_line(prompt, thread_prompt(chat.thread.slot, chat.thread.brief))
         elif self.threads_on():
             prompt = append_prompt_line(prompt, MAIN_PROMPT)
             callbacks = MainChatCallbacks(self, chat)
+        if self.threads_on():
+            # v0.28 (PORT-38): Main and its threads know each other's peer names and when to message.
+            slot = chat.thread.slot if chat.thread is not None else None
+            callbacks.peer_name = peer_name(chat.folder.name, self.peer_token, slot)
+            prompt = append_prompt_line(
+                prompt, peers_prompt(chat.folder.name, self.peer_token, slot, self.config.threads.max)
+            )
         engine.system_prompt = prompt
         # v0.15: every engine starts on the stored model.set choice (``None``: the deployment's default).
         engine.model = self.registry.model
@@ -2306,7 +2366,7 @@ class GatewayServer:
                     run.collector.note_tool(event.tool, event.input)
                 elif isinstance(event, TextDelta):
                     run.collector.note_text(event.text)
-                    if run.title_message is not None and len(run.reply) < REPLY_CHARS:
+                    if (run.title_message is not None or run.message is not None) and len(run.reply) < REPLY_CHARS:
                         run.reply = (run.reply + event.text)[:REPLY_CHARS]
             elif isinstance(event, ToolStarted) and from_tool(event.tool, event.input) is not None:
                 # No turn to collect it: reported when the write is done.
@@ -2344,6 +2404,10 @@ class GatewayServer:
         # Its own task: the engine is asked from inside its own event stream.
         if chat.engine is not None:
             self._spawn(self._report_context(chat, chat.engine), name=f"portico-context-{chat.number}")
+        if run.outcome == "done" and run.message is not None:
+            # v0.28: the newest finished exchange, and the first one of this launch.
+            first = chat.name_basis[0] if chat.name_basis else run.message
+            chat.name_basis = (first, run.message, run.reply)
         if run.outcome == "done" and run.title_message is not None and self.wants_title(chat):
             # Its own task too: a title never holds up or fails a turn.
             self._spawn(self._title_task(chat, run), name=f"portico-title-{chat.number}")
@@ -2599,6 +2663,37 @@ class GatewayServer:
             return
         chat.title = title
         log.info("chat %d: titled %r", chat.number, title)
+        self.registry.persist()
+        await self.send_chat_list()
+
+    async def on_chat_retitle(self, msg: ChatRetitle, conn: ServerConnection) -> None:
+        """v0.28, "Name it for me": write ``chat``'s name again from its conversation so far.
+
+        From the first message of this launch, the newest one and the newest
+        reply; allowed while a turn runs (it reads what has finished). The
+        new name replaces the title and clears a typed alias. When no name
+        can be written the name stays and the answer is ``titles.unavailable``.
+        """
+        chat = self.registry.get(msg.chat)
+        if self.config.titles != "generated" or self.titler is None or chat.name_basis is None:
+            raise ProtocolError("titles.unavailable", NO_NAME_MESSAGE)
+        self._spawn(self._retitle_task(chat, msg, conn), name=f"portico-retitle-{chat.number}")
+
+    async def _retitle_task(self, chat: Chat, msg: ChatRetitle, conn: ServerConnection) -> None:
+        assert self.titler is not None and chat.name_basis is not None
+        first, latest, reply = chat.name_basis
+        said = first if latest == first else f"{first}\n\n(later)\n\n{latest}"
+        try:
+            title = await generate_title(self.titler, said, reply, self.config.title_model, self.title_timeout, chat.folder)
+        except Exception:
+            log.exception("chat %d: writing a name failed", chat.number)
+            title = None
+        if title is None or chat.number not in self.registry:
+            await self._send(conn, self.error("titles.unavailable", NO_NAME_MESSAGE, chat=chat.number, id=msg.id))
+            return
+        chat.title = title
+        chat.alias = None
+        log.info("chat %d: named again %r", chat.number, title)
         self.registry.persist()
         await self.send_chat_list()
 
@@ -3270,6 +3365,9 @@ class GatewayServer:
         # v0.16: the proposals made in this chat, as they stand (only to an app with threads.v1).
         for record in self.registry.proposals_for(chat.number):
             await self._send(conn, self._proposal_frame(record))
+        # v0.28: this chat's share cards, as they stand (only to an app with team.v1).
+        for card in self.registry.share_cards_for(chat.number):
+            await self._send(conn, self._share_card_frame(card))
 
     async def _history(self, chat: Chat, since: int | None) -> tuple[list[ServerMessage], bool, list[Artifact]]:
         """What ``chat.open`` replays: ring events, or the transcript when the ring cannot serve.
@@ -3298,7 +3396,7 @@ class GatewayServer:
             return ring, truncated, []
         transcript = await asyncio.to_thread(self.history_reader, chat.session_id, chat.folder)
         times = await asyncio.to_thread(self.history_times_reader, chat.session_id, chat.folder) if transcript else {}
-        events = [self._replayed_permission(chat, e) for e in history_events(transcript, chat.number, times=times)]
+        events = [self._replayed_permission(chat, e) for e in history_events(transcript, chat.number, times=times, peer_label=lambda name: peer_label(name, chat.folder.name))]
         if not events:
             replayed = {e.artifact.id for e in ring if isinstance(e, ArtifactCreated)}
             return ring, truncated and since is not None, [a for a in chat.artifacts if a.id not in replayed]
@@ -3746,15 +3844,23 @@ class GatewayServer:
         if not self.threads_on():
             raise ProtocolError("threads.off", "this deployment has threads off")
         main = self.registry.get(msg.chat)
-        record = self._pending_proposal(main, msg.proposal)
+        record: ProposalRecord | None = None
+        if msg.proposal is not None:
+            record = self._pending_proposal(main, msg.proposal)
+        elif main.thread is not None or main.ended is not None:
+            # v0.28: the person's own thread opens beside Main, whichever chat they are looking at.
+            raise ProtocolError("thread.not_main", f"chat {main.number} is not the main conversation")
         if self.registry.free_slot(self.config.threads.max) is None:
             if msg.close is None:
                 raise ProtocolError("thread.limit", limit_message(self.config.threads.max))
             self._open_thread(msg.close)
-        self._starting.add(record.id)
+        if record is not None:
+            self._starting.add(record.id)
         self._spawn(self._start_task(main, record, msg, conn), name=f"portico-thread-start-{main.number}")
 
-    async def _start_task(self, main: Chat, record: ProposalRecord, msg: ThreadStart, conn: ServerConnection) -> None:
+    async def _start_task(
+        self, main: Chat, record: ProposalRecord | None, msg: ThreadStart, conn: ServerConnection
+    ) -> None:
         try:
             async with self._thread_lock:
                 slot = self.registry.free_slot(self.config.threads.max)
@@ -3773,8 +3879,10 @@ class GatewayServer:
                         raise ProtocolError("thread.limit", limit_message(self.config.threads.max))
                 # Main's New may have landed meanwhile (the lock, a close's log step): its
                 # pending proposals were dismissed then, and nothing starts from them now.
-                if record.state != "pending" or main.ended is not None:
+                if record is not None and (record.state != "pending" or main.ended is not None):
                     raise ProtocolError("thread.proposal_resolved", f"thread proposal {record.id} was already {record.state}")
+                if record is None and main.ended is not None:
+                    raise ProtocolError("thread.not_main", f"chat {main.number} is not the main conversation")
                 thread = await self._create_thread(main, record, slot, msg.id, conn)
         except ProtocolError as e:
             await self._send(conn, self.error(e.code, e.message, chat=main.number, id=msg.id))
@@ -3784,7 +3892,11 @@ class GatewayServer:
             await self._send(conn, self.error("gateway.error", f"thread.start failed: {e}", chat=main.number, id=msg.id))
             return
         finally:
-            self._starting.discard(record.id)
+            if record is not None:
+                self._starting.discard(record.id)
+        if record is None:
+            # v0.28: opened by the person. Nothing is sent: the thread waits for their first message.
+            return
         # The request is answered (``chat.state`` carried its id): a brief that cannot go
         # (a file gone since the proposal) is said in the thread, not as a second answer.
         send = MessageSend(ts=_now(), chat=thread.number, text=record.brief, attachments=list(record.files))
@@ -3795,22 +3907,29 @@ class GatewayServer:
             await self.notice(thread, f"{BRIEF_NOT_SENT}: {e.message}")
 
     async def _create_thread(
-        self, main: Chat, record: ProposalRecord, slot: int, id: str | None, conn: ServerConnection
+        self, main: Chat, record: ProposalRecord | None, slot: int, id: str | None, conn: ServerConnection
     ) -> Chat:
-        """The thread chat in Main's folder and mode, with the next session number; answered, the proposal started."""
+        """The thread chat in Main's folder and mode, with the next session number; answered, the proposal started.
+
+        Without a ``record`` (v0.28) the person opened it: no brief, no files, no proposal to mark.
+        """
         info = ThreadInfo(
-            label=thread_label(slot), slot=slot, parent=main.number, brief=record.brief,
-            files=list(record.files), opened_at=_now(),
+            label=thread_label(slot), slot=slot, parent=main.number, brief=record.brief if record else "",
+            files=list(record.files) if record else [], opened_at=_now(),
         )
         thread = self.registry.create(main.folder, parent=main.number, number=await self._new_session_number(), thread=info)
         thread.mode = main.mode
         state = thread.set_state("idle")
         self.registry.persist()
-        log.info("chat %d: %s started as chat %d (%s)", main.number, info.label, thread.number, record.id)
+        log.info(
+            "chat %d: %s started as chat %d (%s)", main.number, info.label, thread.number,
+            record.id if record else "opened by the person",
+        )
         await self._send(conn, state.model_copy(update={"id": id}))
         await self.send_chat_list()
-        started = self.registry.resolve_proposal(record.id, "started", thread=thread.number)
-        await self.broadcast(self._proposal_frame(started))
+        if record is not None:
+            started = self.registry.resolve_proposal(record.id, "started", thread=thread.number)
+            await self.broadcast(self._proposal_frame(started))
         if self.registry.models:
             await self.broadcast(self._models_frame(thread))
         return thread
@@ -3821,6 +3940,25 @@ class GatewayServer:
         record = self._pending_proposal(main, msg.proposal)
         dismissed = self.registry.resolve_proposal(record.id, "dismissed")
         await self.broadcast(self._proposal_frame(dismissed, id=msg.id))
+
+    async def on_thread_discard(self, msg: ThreadDiscard, conn: ServerConnection) -> None:
+        """v0.28: take away an open thread nothing was sent to; no log step, nothing in History.
+
+        ``thread.used`` once something was sent (a title, a turn or an engine
+        session says so): that thread closes with ``thread.close``.
+        """
+        chat = self._open_thread(msg.chat)
+        if chat.sent_turn or chat.title is not None or chat.session_id is not None or self._busy(chat):
+            raise ProtocolError("thread.used", USED_MESSAGE)
+        await self._end_signin(chat)
+        await self.cards.cancel_all(chat, "thread discarded", self.emit)
+        await self._close_engine(chat)
+        self._queues.pop(chat.number, None)
+        self._edited.pop(chat.number, None)
+        self.registry.remove(chat.number)
+        self._engine_locks.pop(chat.number, None)
+        log.info("chat %d: %s discarded unused", chat.number, chat.thread.label if chat.thread else "thread")
+        await self.send_chat_list()
 
     async def on_thread_close(self, msg: ThreadClose, conn: ServerConnection) -> None:
         """Close the thread ``chat`` (``close_thread``), from a task; refusals answered with the ``id``."""
@@ -3995,6 +4133,65 @@ class GatewayServer:
     async def on_team_share_cancel(self, msg: TeamShareCancel, conn: ServerConnection) -> None:
         if msg.id:
             await self._team_on().cancel(msg.id)
+            # v0.28: a card in a conversation is removed by Cancel; its record says so after a restart.
+            cancelled = self.registry.resolve_share_card(msg.id, "cancelled")
+            if cancelled is not None:
+                await self.broadcast(self._share_card_frame(cancelled))
+
+    # --- the share card in a conversation (v0.28) ----------------------------------
+
+    def _share_card_frame(self, record: ShareCardRecord) -> TeamShareCard:
+        return TeamShareCard(
+            ts=_now(), chat=record.chat, share=record.id, tool_use_id=record.tool_use_id, paths=list(record.paths),
+            note=record.note, state=record.state, at=record.at,  # type: ignore[arg-type]
+        )
+
+    def _team_path(self, path: Path) -> str:
+        """A file as the team kinds name it: inside the deployment's first root, relative to it; else absolute."""
+        if self.config.roots:
+            base = Path(self.config.roots[0].path).expanduser()
+            with contextlib.suppress(ValueError):
+                return path.resolve().relative_to(base.resolve()).as_posix()
+        return str(path)
+
+    async def propose_share(self, chat: Chat, files: list[str], note: str, tool_use_id: str | None) -> str:
+        """The agent's ``share_with_team``: start a draft for ``chat`` and send its card; returns what the agent reads.
+
+        A relative path is the chat's folder's. No files, a path that is not
+        a file, a file outside the chat's folder, the roots and the spaces
+        folder (once ``..`` and links are resolved), or a draft the
+        deployment refuses is answered as a refusal and nothing is kept. Nothing reaches the team source here: only the
+        person's Share (``team.share.send``) does.
+        """
+        if not self.team.active:
+            return f"{SHARE_REFUSAL_PREFIX}this deployment has no team knowledge."
+        if not files:
+            return f"{SHARE_REFUSAL_PREFIX}name the files to share."
+        paths: list[str] = []
+        for raw in files:
+            path = Path(raw).expanduser()
+            if not path.is_absolute():
+                path = chat.folder / path
+            try:
+                path = path.resolve()
+            except OSError:
+                return f"{SHARE_REFUSAL_PREFIX}{raw} isn't a file."
+            if not path.is_file():
+                return f"{SHARE_REFUSAL_PREFIX}{raw} isn't a file."
+            if not any(path.is_relative_to(folder) for folder in self._shown_folders(chat)):
+                return f"{SHARE_REFUSAL_PREFIX}{raw} is outside this session's folders."
+            paths.append(self._team_path(path))
+        id = f"s-{uuid.uuid4().hex[:8]}"
+        refused = await self.team.prepare(id, paths, note=note or None, chat=chat.number)
+        if refused is not None:
+            return f"{SHARE_REFUSAL_PREFIX}{refused.reason or 'the files cannot be shared now.'}"
+        record = ShareCardRecord(
+            id=id, chat=chat.number, tool_use_id=tool_use_id, paths=paths, note=note or None, created=_now(), state="draft"
+        )
+        self.registry.add_share_card(record)
+        log.info("chat %d: the agent offered a share of %d file(s) (%s)", chat.number, len(paths), id)
+        await self.broadcast(self._share_card_frame(record))
+        return SHARE_OFFERED
 
     async def on_team_request(
         self, msg: TeamGet | TeamSendNow | TeamSendingSet | TeamStop | TeamResolve | TeamShareSend, conn: ServerConnection
@@ -4025,6 +4222,14 @@ class GatewayServer:
                 result = await team.request(id, "resolve", {"path": msg.path, "conflict": msg.conflict, "use": msg.use})
             else:
                 result = await team.share(id, msg.rev, msg.note, msg.remove, bool(msg.unchecked))
+                if result.ok:
+                    # v0.28: a share started in a conversation: its card now reads Shared, for good.
+                    shared = self.registry.resolve_share_card(id, "shared", at=_now())
+                    if shared is not None:
+                        if msg.note is not None:
+                            shared.note = msg.note
+                            self.registry.persist()
+                        await self.broadcast(self._share_card_frame(shared))
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -4117,6 +4322,8 @@ class GatewayServer:
         # (``for_app`` gives an app without ``messages.attachments.v1`` the full text).
         run = await self._echo_turn(chat, msg.text, via, attachments)
         chat.sent_turn = True
+        if msg.text.strip():
+            run.message = msg.text
         if first and msg.text.strip():
             # v0.8: this turn may name the session once it finishes cleanly.
             run.title_message = msg.text
@@ -4199,6 +4406,9 @@ class GatewayServer:
             self._put_back_edited(chat, edited or [])
         if title is not None and chat.title is None:
             chat.title = title
+            if chat.thread is not None:
+                # v0.28: a thread's row leads with its name, so the app hears it at once.
+                await self.send_chat_list()
             self.registry.persist()
 
     async def _reply(self, conn: ServerConnection | None, msg: ServerMessage | Error) -> None:

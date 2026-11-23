@@ -189,6 +189,35 @@ struct TeamShareDraft: Codable, Equatable, Sendable {
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: nil) }
 }
 
+/// `team.share.card` (v0.28): a share the agent started in a conversation, and where it stands.
+/// `share` is the draft's id; `toolUseId` the `share_with_team` tool row the card is drawn in
+/// place of. A state frame: sent on every change and after `chat.live` on every `chat.open`.
+struct TeamShareCard: Codable, Equatable, Sendable {
+    static let messageType = "team.share.card"
+
+    enum State: String, Codable, Sendable {
+        case draft, shared, cancelled
+    }
+
+    var chat: Int
+    var share: String
+    var toolUseId: String? = nil
+    var paths: [String]
+    var note: String? = nil
+    var state: State
+    /// When it was shared.
+    var at: String? = nil
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, share, paths, note, state, at, id, ts
+        case toolUseId = "tool_use_id"
+    }
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: nil) }
+}
+
 // MARK: - app → gateway
 
 /// Get and accept these shares, by the ids the person was shown.

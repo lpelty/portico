@@ -418,7 +418,62 @@ final class CommentsPageScriptTests: XCTestCase {
             """, in: view)
         let info = try await js("return window.__porticoComments.selectionInfo();", in: view) as? [String: Any]
         XCTAssertEqual(info?["text"] as? String, "cat")
-        XCTAssertEqual(info?["occurrence"] as? Int, 0, "the cat in code isn't counted")
+        XCTAssertEqual(info?["occurrence"] as? Int, 1, "v0.28: the cat in inline code is text a reader sees, and counts")
+        let source = "Use `cat` and cat here.\n"
+        let r = try CommentAnchoring.locate(.init(text: "cat", lines: 0...0, occurrence: 1), in: source).get()
+        XCTAssertEqual(r, 14..<17, "the page's count and the source search agree")
+    }
+
+    /// v0.28 (PORT-50): a selection inside inline code takes the whole code, and can be commented.
+    func testASelectionInsideInlineCodeTakesTheWholeCode() async throws {
+        let view = try await page("Run `make build` now.\n\n```\nmake build\n```\n")
+        _ = try await js("""
+            var code = document.querySelector('#body p code');
+            var r = document.createRange(); r.setStart(code.firstChild, 5); r.setEnd(code.firstChild, 8);
+            var s = getSelection(); s.removeAllRanges(); s.addRange(r); return true;
+            """, in: view)
+        let info = try await js("return window.__porticoComments.selectionInfo();", in: view) as? [String: Any]
+        XCTAssertNil(info?["refusal"] as? String)
+        XCTAssertEqual(info?["text"] as? String, "make build")
+        XCTAssertEqual(info?["lines"] as? [Int], [0, 0])
+        XCTAssertEqual(info?["occurrence"] as? Int, 0)
+        let drawn = try await js("return window.__porticoComments.markDraft();", in: view) as? Int
+        XCTAssertEqual(drawn, 1)
+        let draft = try await js("return document.querySelector('mark.pc-draft').textContent;", in: view) as? String
+        XCTAssertEqual(draft, "make build", "the draft is drawn over the whole code")
+    }
+
+    func testASelectionFromTextIntoInlineCodeEndsAfterTheCode() async throws {
+        let view = try await page("Run `make build` now.\n")
+        _ = try await js("""
+            var p = document.querySelector('#body p');
+            var code = p.querySelector('code');
+            var r = document.createRange(); r.setStart(p.firstChild, 0); r.setEnd(code.firstChild, 4);
+            var s = getSelection(); s.removeAllRanges(); s.addRange(r); return true;
+            """, in: view)
+        let info = try await js("return window.__porticoComments.selectionInfo();", in: view) as? [String: Any]
+        XCTAssertNil(info?["refusal"] as? String)
+        XCTAssertEqual(info?["text"] as? String, "Run make build")
+    }
+
+    func testACodeBlockIsStillRefused() async throws {
+        let view = try await page("Text.\n\n```\nmake build\n```\n")
+        try await select("make build", 0, 4, in: view)
+        let info = try await js("return window.__porticoComments.selectionInfo();", in: view) as? [String: Any]
+        XCTAssertEqual(info?["refusal"] as? String, "ignored")
+    }
+
+    func testACommentOnInlineCodeIsHighlightedOverTheCode() async throws {
+        let source = "Run <!--c:ab123-->`make build`<!--/c:ab123--> now.\n"
+            + "<!--co:ab123 by:Sam at:2026-11-19T10:00:00.000Z status:open quote:\"make build\"\nSam (2026-11-19T10:00:00.000Z): Which?\n-->\n"
+        let view = try await page(source)
+        let marked = try await js("""
+            var m = document.querySelector('mark.pc-anchor[data-c="ab123"]');
+            return m ? [m.textContent, m.parentElement.nodeName, m.className] : null;
+            """, in: view) as? [String]
+        XCTAssertEqual(marked, ["make build", "CODE", "pc-anchor pc-open"])
+        let text = try await js("return document.querySelector('#body p').textContent;", in: view) as? String
+        XCTAssertEqual(text, "Run make build now.", "no marker text is shown")
     }
 
     func testQuotedAndDuplicateStatusesHighlightAsTheFormatSays() async throws {

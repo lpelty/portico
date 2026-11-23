@@ -594,6 +594,15 @@ Threads open beside Main, 0 to 2; 0 turns threads off.
 - **Applies:** gateway restart
 - **Belongs in:** either: the deployment sets a default, a person often overrides it
 
+### `threads.messages`
+
+`"ask"`: every message Main or a thread sends (to another session, or to one of its own subagents) waits for the person's yes on a card. `"allow"`: it is sent without one.
+
+- **Type:** one of "ask", "allow" · **Default:** `"ask"`
+- **Example:** `messages = "allow"`
+- **Applies:** gateway restart
+- **Belongs in:** either: the deployment sets a default, a person often overrides it
+
 ## [files]
 
 ### `files.hide_session_folder`

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
-from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, HISTORY_TIMES_CAPABILITY, SIGNIN_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, LabItem, PermissionMode, Person, Presentation, Root, TeamHello, ViewerDefaults, Voice, ELEVENLABS_LAB, READ_ALOUD_LAB
+from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, HISTORY_TIMES_CAPABILITY, SIGNIN_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, THREADS_NEW_CAPABILITY, RETITLE_CAPABILITY, Action, Brand, HelloServer, LabItem, PermissionMode, Person, Presentation, Root, TeamHello, ViewerDefaults, Voice, ELEVENLABS_LAB, READ_ALOUD_LAB
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -393,11 +393,17 @@ class ThreadsConfig(BaseModel):
     ``max`` is 0 to 2 (default 2); 0 turns threads off: Main's agent gets no
     ``open_thread`` tool and the gateway does not offer ``threads.v1``.
     Threads are single presentation only.
+
+    ``messages`` (v0.28): Main and its threads may message each other through
+    the engine's peer messaging. ``ask`` (default) puts every message the
+    engine sends (to another session or to one of its own subagents) behind
+    the person's permission card; ``allow`` sends without one.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     max: int = Field(2, ge=0, le=2)
+    messages: Literal["ask", "allow"] = "ask"
 
 
 class McpConfig(BaseModel):
@@ -911,6 +917,9 @@ def hello_for(
         capabilities.append(CLEAR_SESSIONS_CAPABILITY)
         if config.threads.max > 0:
             capabilities.append(THREADS_CAPABILITY)
+            capabilities.append(THREADS_NEW_CAPABILITY)
+    if config.titles == "generated":
+        capabilities.append(RETITLE_CAPABILITY)
     if config.apps.enabled:
         capabilities.append(APPS_CAPABILITY)
     if config.spaces.folder:

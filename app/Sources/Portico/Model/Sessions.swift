@@ -227,7 +227,7 @@ extension AppModel {
     /// item 65; it said "Same as typing /log or /new"), and, when Log
     /// session is off, why (X2).
     static func sessionCardHint(canLogSession: Bool, offReason: String?) -> String {
-        let new = "New starts fresh"
+        let new = "New session starts fresh"
         if canLogSession { return "Log writes it up · \(new)" }
         switch offReason {
         case noLogStep?: return "\(noLogStep) \(new)."
@@ -518,20 +518,22 @@ struct SessionPresentation: Equatable {
         return cut.trimmingCharacters(in: CharacterSet(charactersIn: " ,;:.-")) + "…"
     }
 
-    /// The title, else the alias; `nil` when the session has neither yet.
+    /// The session's name: what the person typed (the alias, v0.28), else the
+    /// title the app wrote; `nil` when the session has neither yet.
     var title: String? {
-        for candidate in [summary.title, summary.alias] {
+        for candidate in [summary.alias, summary.title] {
             let trimmed = candidate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !trimmed.isEmpty { return trimmed }
         }
         return nil
     }
 
-    /// The title History shows: an ended thread is marked with its label,
-    /// "Thread 2 · Onboarding copy" (v0.16, Ruling 18); a session as `title`.
+    /// The title History shows: a session's `title`; an ended thread is
+    /// listed under its name, then its number, "Onboarding copy · Thread 2"
+    /// (v0.28; the number led until then).
     var historyTitle: String? {
         guard let label = summary.thread?.label else { return title }
-        return [label, title].compactMap { $0 }.joined(separator: " · ")
+        return [title, label].compactMap { $0 }.joined(separator: " · ")
     }
 
     /// `Started today, 9:14 AM · Q3 synthesis` (v0.7 decision 1's full form).

@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.28.0 (2026-11-20)
+
+Threads, comments and a group of small things that had been waiting.
+
+- **A New thread row.** It opens an empty thread beside Main, with no
+  proposal from the agent. A thread opened and never
+  used is discarded.
+- **Threads are called by their name.** A thread is listed by its name,
+  and the name can be changed in place.
+- **Main and its threads can message each other.** One conversation can
+  tell another that a file is taken, or hand something over when asked.
+  A send waits for a yes on a card (`[threads] messages = "allow"` sends
+  without one). The receiving conversation shows "Message from Main: …"
+  before its reply. Neither conversation's text enters the other.
+- **Share with team from a card.** When the agent offers to share files
+  with the team, the offer is one card in the conversation; nothing is
+  shared until Share is pressed on it. It can offer only files in the
+  conversation's own folders.
+- **Inline code can be commented.** A comment can sit on the code in an
+  inline code span, as a whole, in the reading view, in Edit mode and from
+  the agent. A code block and front matter still can't be commented.
+- **A dropped file is attached.** A file dropped anywhere over the
+  conversation is attached to the message being written, including files
+  an app promises rather than hands over. Dragged text or a link is left
+  alone.
+- **The line between the conversation and the viewer is easier to grab.**
+  The resize pointer shows on the line and on both sides of it, along its
+  whole height; before, only a strip left of the line answered.
+- **Top-level folders in Files fold again**, from their name row.
+- **Conversation marker lines sit further apart.**
+- **The sample team source never writes over a file**: every copy it keeps
+  goes through one function that refuses to.
+
 ## v0.27.1 (2026-11-19)
 
 - **A web address the app opens itself shows as a page.** A service's

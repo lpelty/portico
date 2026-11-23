@@ -188,6 +188,17 @@ chat goes `idle` → `working` as usual.
 `chat`, `alias: string | absent` (absent or empty clears it). Reply: an
 updated `chat.list`.
 
+### `chat.retitle` — `ChatRetitle` *(v0.28, `chat.retitle.v1`)*
+`chat`, `id`. "Name it for me": the gateway writes the session's name again
+from its conversation so far (the first message since the gateway started,
+the newest one and the start of the newest reply), sets it as `title` and
+clears `alias`; answered with `chat.list`. Allowed while a turn runs. The
+gateway lists `chat.retitle.v1` when `titles = "generated"`. Error:
+`titles.unavailable` ("a name could not be written just now": nothing has
+been said since the gateway started, or the call failed); the name stays.
+A name the app wrote is otherwise set once (the first turn) and a typed
+`alias` is never replaced.
+
 ### `chat.remove` — `ChatRemove`
 `chat`. Closes the engine, forgets the chat (its number is never reused),
 and replies with an updated `chat.list`.
@@ -549,7 +560,9 @@ an app that lists the same; v0.12: `spaces.v1` always (v0.14: with no
 `[spaces] folder` the folder is `<state dir>/spaces`), and `spaces.refresh` as well when `[spaces] refresh` is, so the app
 offers Refresh on a space; v0.15: `models.v1` always, for the model menu,
 see [Models](#models-v015); v0.16: `threads.v1` in single presentation with
-`[threads] max` above 0, see [Threads](#threads-v016); v0.18: `mcp.v1`
+`[threads] max` above 0, see [Threads](#threads-v016) (v0.28: `threads.new.v1`
+with it, so the person can open a thread, and `chat.retitle.v1` when
+`titles = "generated"`); v0.18: `mcp.v1`
 always, see [MCP servers](#mcp-servers-v018), `plugins.v1` always, see
 [Plugins](#plugins-v018), and `apps.v1` when `[apps] enabled` (the
 default), see [MCP Apps](#mcp-apps-v018); v0.19: `messages.attachments.v1`
@@ -1024,6 +1037,9 @@ replayed from the engine's transcript (one restored after a gateway
 restart) gets the notices of the current gateway run put back in, after
 the turn each followed and without `seq`; only notices from before the
 restart are lost.
+
+v0.28: `kind: "peer.message"` is a message from another conversation, see
+[Messages between Main and its threads](#messages-between-main-and-its-threads-v028).
 
 v0.26: `kind: "signin.continued"` (text "Continued after sign-in") marks
 where a turn carried on after a sign-in wait (`signin.wait` `current`). The
@@ -1674,6 +1690,44 @@ When the gateway's `hello` and the app's both list `threads.v1`:
   sent `thread.proposal`. An older gateway has no `threads.v1`, so the app
   shows no thread UI.
 
+### Messages between Main and its threads (v0.28)
+Main and its threads message each other through the engine's own peer
+messaging (its `ListAgents` and `SendMessage` tools), not through the
+gateway. Nothing is added to the protocol but one `chat.notice` kind.
+
+- **Names.** With threads on, every engine starts with a peer name
+  (`--name`): `<folder>-<token>-main` for Main, `<folder>-<token>-thread-<slot>`
+  for a thread. `<folder>` is the chat folder's name in lowercase letters,
+  digits and dashes (24 at most); `<token>` is four hex digits of the
+  gateway's launch, so an engine left by an earlier launch never shares a
+  name with a live one.
+- **The prompt line.** After its own line, each engine's prompt says: "Your
+  peer name is <name>. The person's other conversations in this app: <the
+  others with their names>. A thread can be reached only while it is open.
+  Message one with SendMessage only when your task overlaps its work, you
+  changed a file it is using, you found a pitfall it will hit, or the person
+  asked you to hand something over. Never send progress reports, and never
+  pass a message for the person through another conversation: the person
+  reads each one themselves. The person may be asked before a message is
+  sent."
+- **Sending asks first.** Every `SendMessage` goes through
+  `permission.request`, in every permission mode (a hook says `ask`; the
+  engine would send without asking). The gateway does not try to tell whom
+  a `to` names, so a message to one of the engine's own subagents is asked
+  about too. Config `[threads] messages = "allow"` sends without the card.
+  The tool row's summary is `<peer name>: <the message's summary>`.
+- **Receiving.** The message begins a turn nobody sent in the receiving
+  chat (`turn.started`, no `user.text`), even when no turn has run there.
+  Right after it comes `chat.notice` with `kind: "peer.message"` and text
+  `Message from Main: <text>` (or `Thread 2`, or the peer name of any other
+  session): the text on one line, 600 characters at most. It is stamped, so
+  it is in the ring; `chat.history` from the engine's transcript has one
+  where the message was, and never draws the message as the person's. An
+  app that does not know the kind draws a plain notice line.
+- **A peer that is gone.** A closed thread's engine has left the engine's
+  registry; the send's `tool.finished` carries the engine's words ("No agent
+  named '<name>' is reachable.") as its summary.
+
 ### The `open_thread` tool (what Main's agent sees)
 With threads on, Main's engine (never a thread's) gets an in-process tool,
 `mcp__portico__open_thread`, allowed outright (no card in any mode), and
@@ -1763,6 +1817,24 @@ ended meanwhile (New during the close), nothing starts and the answer is
 is in flight: a second Start makes no second thread), `thread.limit` ("two
 threads are open; close one to start another", or with `max = 1` "a thread
 is open; close it to start another": at the limit with no `close`), `thread.not_open` (`close` names no open thread).
+
+*v0.28 (`threads.new.v1`, listed wherever `threads.v1` is):* without a
+`proposal` the person opens the thread themselves. `chat` is still Main's
+(`thread.not_main` otherwise). The thread starts empty: its `thread.brief`
+is `""`, nothing is sent to it, no engine starts until the person's first
+message, and its agent's system prompt says it starts fresh with nothing
+from the main conversation. Answered with `chat.state idle` (with the
+`id`) and `chat.list`; no `thread.proposal`. The limit and `close` work as
+above. A thread's first message sets its `title` (the first line, then the
+generated one) and a `chat.list` follows at once, so the app can lead the
+row with the name.
+
+### `thread.discard` — `ThreadDiscard` *(app → gateway, v0.28, `threads.new.v1`)*
+`chat` (the thread), `id`. Takes away an open thread nothing was sent to:
+it leaves the list and its slot, no log step runs and nothing is written
+to History. Answered with `chat.list`. Errors: `thread.not_open`,
+`thread.used` (something was sent to it, or a turn is running: it closes
+with `thread.close`).
 
 ### `thread.dismiss` — `ThreadDismiss` *(app → gateway)*
 `chat` (Main's), `proposal`, `id`. "Not now": the proposal becomes
@@ -2196,7 +2268,7 @@ and allowed with no permission card:
 |---|---|---|
 | `comments_list` | `path`, `include_resolved?` | Each thread: id, status, quote, anchored text (or "not found"), and its replies with author and time. Resolved threads only with `include_resolved`. |
 | `comment_reply` | `path`, `id`, `text` | Adds a reply by the agent (the `brand.agent_name` the app received in `hello`), with the time now. A resolved thread stays resolved. |
-| `comment_add` | `path`, `quote`, `text`, `occurrence?` | Anchors a new thread on the `occurrence`-th (default first) match of `quote`, within one paragraph and outside code, by the agent. |
+| `comment_add` | `path`, `quote`, `text`, `occurrence?` | Anchors a new thread on the `occurrence`-th (default first) match of `quote`, within one paragraph and outside a code block (v0.28: inline code is quoted whole and anchored outside its backticks; part of one is refused), by the agent. |
 
 Agents can't resolve threads; resolving is the person's. A path must be
 inside the chat's folders (a relative path resolves against the chat's
@@ -2475,6 +2547,26 @@ seen. `unchecked: true` shares after a `check_error`, without the check.
 
 ### `team.share.cancel` — `TeamShareCancel` *(app → gateway)*
 `id`: the draft was closed. Nothing is shared and no file was changed.
+
+### `team.share.card` — `TeamShareCard` *(v0.28)*
+`chat`, `share`, `tool_use_id?`, `paths`, `note?`,
+`state: draft | shared | cancelled`, `at?`. A share the agent started in
+a conversation because the person asked there. With team knowledge on,
+every chat's agent has the tool `share_with_team` (`files`, `note?`): it
+starts a draft (`team.share.draft` with `chat`, its `id` equal to
+`share`), stores this record and returns at once; a call with no files,
+a path that is not a file, a file outside the chat's folder, the roots and
+the spaces folder (once `..` and links are resolved), or a draft the
+deployment refuses is answered "Not offered: …" and leaves nothing. Nothing reaches the team source
+until the person's `team.share.send` for `share`; then the record becomes
+`shared` with `at` (and the note the person sent). `team.share.cancel`
+makes it `cancelled`. `tool_use_id` is the tool row the app draws the
+card in place of. A state frame like `thread.proposal`: not in the ring,
+kept in the index, sent on every change and after `chat.live` on every
+`chat.open`, so a shared card reads the same after a restart and after a
+file stops syncing. A card still `draft` when the gateway starts becomes
+`cancelled`: its draft went with the last run. Only to an app with
+`team.v1`.
 
 ## Services *(v0.4)*
 

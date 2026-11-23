@@ -49,7 +49,7 @@ enum CommentAnchoring {
     /// The words the Comment item's tooltip gives.
     static func reason(_ r: CommentFormat.Refusal) -> String {
         switch r {
-        case .notFound, .occurs, .crossesBlocks, .insideAtom: "Select text within one paragraph, outside links and formatting."
+        case .notFound, .occurs, .crossesBlocks, .insideAtom, .insideCodeSpan: "Select text within one paragraph, outside links and formatting."
         case .notShown: "That text isn't shown in the table."
         case .insideIgnored: "Comments can't go in code or front matter."
         }

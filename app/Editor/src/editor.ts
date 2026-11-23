@@ -29,7 +29,7 @@ import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { livePreview, type LinkOpener } from "./livePreview.ts";
 import { Bridge, type Post } from "./bridge.ts";
-import { anchorAwareMarkdown, commentsExtension, draftField, scanComments, selectionRefusal, setDraft, trimSelection, widenToAutolink } from "./comments.ts";
+import { anchorAwareMarkdown, commentsExtension, draftField, scanComments, selectionRefusal, setDraft, trimSelection, widenToAutolink, widenToCodeSpans } from "./comments.ts";
 
 export type Mode = "markdown" | "code";
 
@@ -398,7 +398,9 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
       markDraft() {
         const { from: start, to: end } = view.state.selection.main;
         // The draft is drawn where the markers will be written (around a whole autolink, review M1).
-        const [from, to] = end > start ? widenToAutolink(view.state.doc.toString(), start, end) : [start, end];
+        // v0.28: and around a whole inline code span the selection touches.
+        const source = view.state.doc.toString();
+        const [from, to] = end > start ? widenToAutolink(source, ...widenToCodeSpans(source, start, end)) : [start, end];
         view.dispatch({ effects: setDraft.of(to > from ? { from, to } : null) });
         return to > from ? 1 : 0;
       },

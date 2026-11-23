@@ -49,7 +49,7 @@ from .messages import (
     ServerMessage,
     ThreadInfo,
 )
-from .state import ChatRecord, Index, PromptRecord, ProposalRecord, QuestionOutcome, StateDir, ToolPermission
+from .state import ChatRecord, Index, PromptRecord, ProposalRecord, QuestionOutcome, ShareCardRecord, StateDir, ToolPermission
 
 if TYPE_CHECKING:
     from .signin import SigninWaitState
@@ -62,6 +62,8 @@ TOOL_PERMISSIONS_KEPT = 500
 
 # How many thread proposals the index keeps (newest), v0.16.
 PROPOSALS_KEPT = 100
+# How many share cards the index keeps (newest), v0.28.
+SHARE_CARDS_KEPT = 100
 
 # A session's title: the first line of its first message, at most this long.
 TITLE_LIMIT = 60
@@ -215,6 +217,10 @@ class Chat:
         # command's empty turn or a log step does not count. Not persisted: a
         # chat with a session comes back ``restored`` and is never titled.
         self.sent_turn = False
+        # v0.28: what a name is written from on request (``chat.retitle``): the
+        # first message of this launch, the newest one and the newest reply's
+        # start. Not persisted: after a restart it fills with the next turn.
+        self.name_basis: tuple[str, str, str] | None = None
 
     def __repr__(self) -> str:
         return f"Chat({self.number}, {str(self.folder)!r}, state={self.state!r}, seq={self.seq})"
@@ -527,6 +533,7 @@ class ChatRegistry:
         chat = self.get(number)
         del self._chats[number]
         self._index.proposals = [p for p in self._index.proposals if p.chat != number]
+        self._index.share_cards = [r for r in self._index.share_cards if r.chat != number]
         self.persist()
         # v0.24 (sweep #14): its composed custom prompt goes with it; a failure
         # here is logged and never undoes or interrupts the removal.
@@ -617,6 +624,40 @@ class ChatRegistry:
         changed = [p for p in self._index.proposals if p.chat == chat and p.state == "pending"]
         for record in changed:
             record.state = "dismissed"
+        if changed:
+            self.persist()
+        return changed
+
+    # --- share cards (v0.28) -------------------------------------------------------
+
+    def add_share_card(self, record: ShareCardRecord) -> None:
+        """Keep a new share card (the oldest go past ``SHARE_CARDS_KEPT``); saved at once."""
+        self._index.share_cards = [*self._index.share_cards, record][-SHARE_CARDS_KEPT:]
+        self.persist()
+
+    def share_card(self, id: str) -> ShareCardRecord | None:
+        """The share card whose draft is ``id``, if the index has one."""
+        return next((r for r in self._index.share_cards if r.id == id), None)
+
+    def share_cards_for(self, chat: int) -> list[ShareCardRecord]:
+        """The share cards of ``chat``, oldest first."""
+        return [r for r in self._index.share_cards if r.chat == chat]
+
+    def resolve_share_card(self, id: str, state: str, at: str | None = None) -> ShareCardRecord | None:
+        """Set a draft card's state (and when it was shared); saved at once. ``None`` when unknown or already settled."""
+        record = self.share_card(id)
+        if record is None or record.state != "draft":
+            return None
+        record.state = state
+        record.at = at
+        self.persist()
+        return record
+
+    def cancel_draft_share_cards(self) -> list[ShareCardRecord]:
+        """Every card still a draft becomes ``cancelled`` (the gateway started: its drafts are gone); returns them."""
+        changed = [r for r in self._index.share_cards if r.state == "draft"]
+        for record in changed:
+            record.state = "cancelled"
         if changed:
             self.persist()
         return changed

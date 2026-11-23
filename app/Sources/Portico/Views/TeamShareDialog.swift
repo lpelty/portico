@@ -60,13 +60,13 @@ struct TeamShareDialog: View {
                     .scaledFont(11)
                     .foregroundStyle(Theme.text3)
                 if let title = session.findingsTitle {
-                    findings(session, title: title)
+                    TeamShareFindings(session: session, title: title) { model.teamShareChoose($0, $1) }
                 }
                 if let error = session.checkError {
-                    notice(error)
+                    TeamShareNotice(text: error)
                 }
                 if let refusal = session.refusal, refusal != session.checkError {
-                    notice(refusal)
+                    TeamShareNotice(text: refusal)
                 }
                 HStack(alignment: .center, spacing: 12) {
                     Text(TeamShareSession.footer)
@@ -95,65 +95,6 @@ struct TeamShareDialog: View {
 
     private var noteBinding: Binding<String> {
         Binding(get: { model.teamShare?.note ?? "" }, set: { model.teamShare?.note = $0 })
-    }
-
-    private func findings(_ session: TeamShareSession, title: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(Theme.iconFont(12))
-                    .foregroundStyle(Theme.wait)
-                Text(title)
-                    .scaledFont(13, weight: .semibold)
-                    .foregroundStyle(Theme.text)
-            }
-            ForEach(session.findings) { finding in
-                if let choice = session.choices[finding.id] {
-                    HStack(spacing: 6) {
-                        Text(TeamShareSession.chosen(finding, choice))
-                            .scaledFont(12)
-                            .foregroundStyle(Theme.text2)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Button("Undo") { model.teamShareChoose(finding.id, nil) }
-                            .buttonStyle(.plain)
-                            .scaledFont(12)
-                            .foregroundStyle(model.brand.accent ?? Theme.accent)
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("\(TeamShareSession.text(finding)) \(TeamShareSession.changesFile)")
-                            .scaledFont(12)
-                            .lineSpacing(3)
-                            .foregroundStyle(Theme.text)
-                            .fixedSize(horizontal: false, vertical: true)
-                        HStack(spacing: 8) {
-                            Button("Take it out") { model.teamShareChoose(finding.id, .takeOut) }
-                                .buttonStyle(PillButtonStyle(kind: .quiet))
-                            Button("Keep it") { model.teamShareChoose(finding.id, .keep) }
-                                .buttonStyle(PillButtonStyle(kind: .quiet))
-                        }
-                    }
-                }
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.waitSoft, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-
-    private func notice(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(Theme.iconFont(12))
-                .foregroundStyle(Theme.wait)
-            Text(text)
-                .scaledFont(12)
-                .foregroundStyle(Theme.text)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.waitSoft, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 

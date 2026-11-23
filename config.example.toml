@@ -142,6 +142,9 @@
 # [threads]
 ## Threads open beside Main, 0 to 2; 0 turns threads off.
 # max = 2
+## `"ask"`: every message Main or a thread sends (to another session, or to one of its own
+## subagents) waits for the person's yes on a card. `"allow"`: it is sent without one.
+# messages = "ask"
 
 # [files]
 ## True lists only the [[roots]] in the Files pane, not the session's own folder.

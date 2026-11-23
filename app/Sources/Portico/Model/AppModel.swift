@@ -168,6 +168,8 @@ final class AppModel: ObservableObject {
     /// The chat shown in the conversation pane. Showing another ends focus.
     @Published var selected: Int? {
         didSet {
+            // v0.28 (PORT-77): a new thread left without a message goes away.
+            if let left = oldValue, left != selected { discardIfUnused(chat: left) }
             if let focus = viewerFocus, focus.chat != selected { endFocus() }
             if selected != nil { conversationShown = true }
             if let selected, selected == heldViewer { applyViewerRestore(chat: selected) }
@@ -278,6 +280,10 @@ final class AppModel: ObservableObject {
     var teamGetPending: String?
     /// The share dialog, while it is open (v0.27, ZJ2).
     @Published var teamShare: TeamShareSession?
+    /// v0.28 (PORT-82): the share cards of conversations, by the draft's id, as the gateway last said.
+    @Published var teamShareCards: [String: TeamShareCard] = [:]
+    /// The working state of each card still a draft (the note, the check, the choices).
+    @Published var teamCardSessions: [String: TeamShareSession] = [:]
     /// Where the last arrival given a conversation line is kept; the tests give their own.
     var teamDefaults: UserDefaults = .standard
     /// Per chat, the attachment paths queued in the input bar: the Files
@@ -297,6 +303,8 @@ final class AppModel: ObservableObject {
     /// written to the settings so it is the same after a restart and in a
     /// later session that shows the same folder.
     @Published var openFolders: [String] = []
+    /// The top-level folders folded in the Files tree, by absolute path (v0.28).
+    @Published var foldedRoots: [String] = []
     /// The folders this person added to the Files pane, as the gateway named them (v0.19 §4.2; `files.roots`).
     @Published private(set) var extraRoots: [Root] = []
     /// Whether each extra folder was a directory at the last look (`refreshExtraFolderChecks`).
@@ -352,6 +360,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var startingClose: Int?
     /// The working thread whose close is asking "Close it anyway?".
     @Published var closingThread: Int?
+    /// v0.28: the person's own `thread.start` (New thread) the gateway has not answered.
+    @Published private(set) var openingThread: String?
+    /// v0.28 (ZL3): New thread was clicked with every slot taken: the row shows the open threads to close one.
+    @Published var newThreadLimitShown = false
+    /// v0.28 (ZK2): the chat whose name is a field now (Rename…, or a double-click on the name).
+    @Published var renaming: Int?
     /// Per thread, the id of a `thread.close` the gateway has not answered.
     @Published private(set) var closingThreads: [Int: String] = [:]
     /// Per thread, why its last close was refused (its log step could not
@@ -654,6 +668,7 @@ final class AppModel: ObservableObject {
             var isDirectory: ObjCBool = false
             return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
         }
+        foldedRoots = settings.foldedRoots
         // A change to either viewer switch tells the gateway at once. The
         // publishers fire before the value lands, so send what they carry.
         viewerSwitchObserver = settings.$viewerAgentCanSee
@@ -967,6 +982,9 @@ final class AppModel: ObservableObject {
     /// Bumped to ask whichever composer is on screen to take focus.
     @Published private(set) var composerFocusRequests = 0
 
+    /// Put the cursor in the composer on screen (v0.28: a new thread opens ready to type in).
+    func requestComposerFocus() { composerFocusRequests += 1 }
+
     /// The New space dialog is up (AO2).
     @Published var newSpaceShown = false
 
@@ -1083,6 +1101,7 @@ final class AppModel: ObservableObject {
         for chat in Array(pendingSends.keys) { pendingSends[chat]?.afterOpen = false }
         hello = incoming
         teamReconnected()
+        teamCardsReconnected()
         // A `chat.remove` out on the lost connection is unconfirmed: its images stay.
         pendingRemovals = [:]
         extraRoots = []
@@ -1177,6 +1196,9 @@ final class AppModel: ObservableObject {
             passedByTexts = [:]
             // Likewise a thread start or close in flight (v0.16): the
             // proposals and `chat.list` that follow say how each stands.
+            openingThread = nil
+            newThreadLimitShown = false
+            renaming = nil
             startingProposal = nil
             startingRequest = nil
             startingClose = nil
@@ -1375,16 +1397,21 @@ final class AppModel: ObservableObject {
             teamStateArrived(state)
 
         case .teamResult(let result):
-            if !teamShareResultArrived(result) { teamResultArrived(result) }
+            if !teamShareResultArrived(result), !teamCardResultArrived(result) { teamResultArrived(result) }
 
         case .teamShareDraft(let draft):
             teamShareDraftArrived(draft)
+            teamCardDraftArrived(draft)
+
+        case .teamShareCard(let card):
+            teamShareCardArrived(card)
 
         case .error(let error):
             // A refused `chat.remove` keeps the chat's images (v0.19 §8.2).
             if let id = error.id { pendingRemovals[id] = nil }
             lastError = error
             teamShareErrorArrived(error)
+            teamCardErrorArrived(error)
             applySpaceError(error)
             applyAppRefusal(error)
             applyMcpError(error)
@@ -1865,7 +1892,7 @@ final class AppModel: ObservableObject {
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .filesRoots, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
             .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal, .appCallResult, .mcpServers,
-            .pluginsState, .pluginsDetails, .pluginsOptions, .deploymentMessage, .signinWait, .teamState, .teamResult, .teamShareDraft:
+            .pluginsState, .pluginsDetails, .pluginsOptions, .deploymentMessage, .signinWait, .teamState, .teamResult, .teamShareDraft, .teamShareCard:
             break
         }
     }
@@ -1894,6 +1921,8 @@ final class AppModel: ObservableObject {
     /// "Started N agents" row stands for (v0.10 decision 1).
     func isDrawn(_ item: TranscriptItem, in chat: Int) -> Bool {
         guard TurnMarkerView.isDrawn(item) else { return false }
+        // v0.28: Cancel removes a share card, and its tool row with it.
+        if case .tool(let row) = item, isCancelledShare(toolUse: row.toolUseId) { return false }
         if case .tool(let row) = item, let activity = agentActivity[chat] {
             return !activity.startingToolUses.contains(row.toolUseId)
         }
@@ -2670,6 +2699,20 @@ final class AppModel: ObservableObject {
         draftAttachments[chat] = list
     }
 
+    /// A drop over the conversation or its message box (v0.28, PORT-79):
+    /// files on disk, and promised files once they have been written to the
+    /// pending folder, become the draft's attachments. The task is returned
+    /// for tests.
+    @discardableResult
+    func attachDropped(_ providers: [NSItemProvider], to chat: Int) -> Task<DroppedFiles.Result, Never> {
+        let folder = attachmentsHome.map(PastedImages.pendingFolder(home:))
+        return Task { [weak self] in
+            let result = await DroppedFiles.load(providers, promisedInto: folder)
+            if !result.paths.isEmpty { self?.attach(result.paths, to: chat) }
+            return result
+        }
+    }
+
     func detach(_ path: String, from chat: Int) {
         draftAttachments[chat] = (draftAttachments[chat] ?? []).filter { $0 != path }
     }
@@ -2708,6 +2751,7 @@ final class AppModel: ObservableObject {
             }
             return Task.detached(priority: .userInitiated) { try PastedImages.save(data, home: home, now: Date()) }
         }
+        intake.promiseFolder = { [weak self] in self?.attachmentsHome.map(PastedImages.pendingFolder(home:)) }
         return intake
     }
 
@@ -2857,6 +2901,79 @@ extension AppModel {
         send(.threadStart(ThreadStart(chat: proposal.chat, proposal: proposal.proposal, close: closing, id: id)))
     }
 
+    // MARK: v0.28: New thread, and names (PORT-77, PORT-80)
+
+    /// The New thread row shows: threads on, and a gateway that opens one without a proposal.
+    var canOpenThread: Bool { threadsOn && offers(ThreadStart.newCapability) && liveSession != nil }
+
+    /// "Name it for me" is offered: the gateway writes names (`chat.retitle.v1`).
+    var canNameForMe: Bool { offers(ChatRetitle.capability) }
+
+    /// A thread the person opened that nothing was sent to: no name, no
+    /// brief, nothing in its conversation, nothing typed or attached.
+    func isUnusedThread(chat: Int) -> Bool {
+        guard let summary = summary(of: chat), let info = summary.thread, summary.ended == nil else { return false }
+        return info.brief.isEmpty && ThreadName.name(summary) == nil && summary.state != .working
+            && (transcripts[chat] ?? []).isEmpty && draft(for: chat).isEmpty && (draftAttachments[chat] ?? []).isEmpty
+            && !isSending(chat: chat)
+    }
+
+    /// New thread (the row, Control-T, File › New Thread): one click opens
+    /// an empty thread and switches to it. In a new thread nothing was sent
+    /// to, it is this one: the composer takes the cursor. With every slot
+    /// taken the row shows the open threads, to close one first.
+    func newThread() {
+        guard canOpenThread, openingThread == nil, connection == .connected, let main = liveSession?.chat else { return }
+        if let shown = shownChat, isUnusedThread(chat: shown) {
+            requestComposerFocus()
+            return
+        }
+        if threads.atLimit {
+            newThreadLimitShown = true
+            return
+        }
+        startOwnThread(main: main, closing: nil)
+    }
+
+    /// The limit list's Close (ZL3): that thread closes as Close thread
+    /// closes it, and the new thread then opens.
+    func closeForNewThread(chat: Int) {
+        guard canOpenThread, openingThread == nil, let main = liveSession?.chat, thread(of: chat) != nil else { return }
+        newThreadLimitShown = false
+        startOwnThread(main: main, closing: chat)
+    }
+
+    private func startOwnThread(main: Int, closing: Int?) {
+        let id = Self.requestId()
+        openingThread = id
+        startingClose = closing
+        if let closing { closeFailures[closing] = nil }
+        send(.threadStart(ThreadStart(chat: main, proposal: nil, close: closing, id: id)))
+    }
+
+    /// Switching out of a new thread nothing was sent to takes it away:
+    /// it never stays in the list, uses up the limit or reaches History.
+    func discardIfUnused(chat: Int) {
+        guard offers(ThreadStart.newCapability), isUnusedThread(chat: chat), !isClosing(chat: chat) else { return }
+        if renaming == chat { renaming = nil }
+        send(.threadDiscard(ThreadDiscard(chat: chat, id: Self.requestId())))
+    }
+
+    /// Save a typed name (Return in the field). Empty goes back to the name the app writes.
+    func rename(chat: Int, to name: String) {
+        renaming = nil
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let summary = summary(of: chat), trimmed != (SessionPresentation(summary: summary).title ?? "") else { return }
+        alias(chat: chat, trimmed)
+    }
+
+    /// Name it for me: the gateway writes a fresh name from the conversation so far.
+    func nameForMe(chat: Int) {
+        guard canNameForMe, connection == .connected else { return }
+        renaming = nil
+        send(.chatRetitle(ChatRetitle(chat: chat, id: Self.requestId())))
+    }
+
     /// "Not now": the gateway answers with the proposal `dismissed`. One
     /// at a time per proposal, so a double click sends one.
     func dismissProposal(_ proposal: ThreadProposal) {
@@ -2903,6 +3020,14 @@ extension AppModel {
     /// the new thread, which is loaded (not shown: Ruling 6 as overridden,
     /// the selection stays); a close's answer ends its wait.
     func noteThreadAnswer(id: String, chat: Int) {
+        if id == openingThread {
+            // v0.28: the person's own thread is shown at once, the cursor in its composer.
+            openingThread = nil
+            startingClose = nil
+            closeDocumentView()
+            open(chat: chat)
+            requestComposerFocus()
+        }
         if id == startingRequest {
             startingRequest = nil
             startingClose = nil
@@ -2917,6 +3042,12 @@ extension AppModel {
     /// (Review Focus 2) and Main's status line says why; a refused close
     /// keeps the thread open.
     func noteThreadRefusal(id: String, code: String, message: String) {
+        if id == openingThread {
+            openingThread = nil
+            let failure = CloseFailure(code: code, message: message)
+            if let closing = startingClose, failure.offersCloseWithoutLogging { closeFailures[closing] = failure }
+            startingClose = nil
+        }
         if id == startingRequest {
             startingProposal = nil
             startingRequest = nil

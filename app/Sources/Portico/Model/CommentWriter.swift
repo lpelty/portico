@@ -97,8 +97,9 @@ enum CommentWriter {
             case .addRange(let raw, let body):
                 let length = text.utf16.count
                 guard raw.lowerBound >= 0, raw.upperBound <= length, !raw.isEmpty else { throw CommentFormat.Refusal.notFound }
-                let range = CommentFormat.snapSelection(text, raw)
-                if CommentFormat.ignoredRegions(text).contains(where: { $0.overlaps(range) }) {
+                // v0.28: a selection that touches inline code takes the whole span; a code block is still refused.
+                let range = CommentFormat.widenToCodeSpans(text, CommentFormat.snapSelection(text, raw))
+                if CommentFormat.blockCodeRegions(text).contains(where: { $0.overlaps(range) }) {
                     throw CommentFormat.Refusal.insideIgnored
                 }
                 let units = Array(text.utf16)[range]

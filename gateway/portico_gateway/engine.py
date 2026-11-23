@@ -64,7 +64,7 @@ from claude_agent_sdk import (
 from .artifacts import paths_in
 from .images import split_attachments, split_edited_note, user_message
 from .agents import AgentTracker
-from .threads import EMPTY_BRIEF, REFUSAL_PREFIX, TOOL_DESCRIPTION
+from .threads import EMPTY_BRIEF, PEER_NOTICE, REFUSAL_PREFIX, SHARE_REFUSAL_PREFIX, TOOL_DESCRIPTION, peer_notice_text
 from .comment_tools import COMMENT_TOOL_NAMES, build_comment_tools
 from .viewer import QUEUE_NOTE, STOPPED, VIEWER_TOOL_NAMES, build_viewer_tools
 from .messages import (
@@ -105,6 +105,9 @@ SHOW_TOOL_NAME = f"mcp__{SHOW_SERVER}__{SHOW_TOOL}"
 # v0.16: the in-process tool Main's agent proposes a thread with, on the same server.
 OPEN_THREAD_TOOL = "open_thread"
 OPEN_THREAD_TOOL_NAME = f"mcp__{SHOW_SERVER}__{OPEN_THREAD_TOOL}"
+# v0.28: the agent offers a share with the team (``build_share_tool``).
+SHARE_TOOL = "share_with_team"
+SHARE_TOOL_NAME = f"mcp__{SHOW_SERVER}__{SHARE_TOOL}"
 SHOWN_TEXT = "Shown in the viewer."
 # v0.17: the app did not say the page had loaded within the show's 10 s.
 STILL_LOADING_TEXT = "Shown; still loading."
@@ -160,7 +163,7 @@ _READ_ONLY_ENGINE_TOOLS: frozenset[str] = frozenset(
 # auto mode has nothing to decide for them either. (v0.23) The comment tools
 # only touch comment markup in .md files inside the session's folders.
 ALLOWED_OUTRIGHT_TOOLS: frozenset[str] = frozenset(
-    {SHOW_TOOL_NAME, OPEN_THREAD_TOOL_NAME, *VIEWER_TOOL_NAMES, *COMMENT_TOOL_NAMES}
+    {SHOW_TOOL_NAME, OPEN_THREAD_TOOL_NAME, SHARE_TOOL_NAME, *VIEWER_TOOL_NAMES, *COMMENT_TOOL_NAMES}
 )
 
 # What the permission row treats as "nothing to decide" (see server.py).
@@ -364,6 +367,12 @@ def summarize_tool(tool: str, input: dict[str, Any]) -> str:
         skill = input.get("skill")
         if isinstance(skill, str) and skill:
             return _first_line(skill)
+    elif tool == PEER_SEND_TOOL:
+        # v0.28: who the message is for, then what it says.
+        to = input.get("to")
+        words = input.get("summary") or input.get("message")
+        if isinstance(to, str) and to:
+            return _first_line(f"{to}: {words}" if isinstance(words, str) and words.strip() else to)
     return tool
 
 
@@ -371,11 +380,23 @@ def result_summary(content: str | list[dict[str, Any]] | None) -> str:
     if content is None:
         return ""
     if isinstance(content, str):
-        return _first_line(content)
+        return _first_line(_answer_message(content))
     for block in content:
         if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str):
-            return _first_line(block["text"])
+            return _first_line(_answer_message(block["text"]))
     return ""
+
+
+def _answer_message(text: str) -> str:
+    """v0.28: a result that is ``{"success": …, "message": "…"}`` (the engine's SendMessage answers so) reads as its message."""
+    if not text.lstrip().startswith('{"success"'):
+        return text
+    try:
+        answer = json.loads(text)
+    except ValueError:
+        return text
+    message = answer.get("message") if isinstance(answer, dict) else None
+    return message if isinstance(message, str) and message.strip() else text
 
 
 def _result_text(content: str | list[dict[str, Any]] | None) -> str:
@@ -515,6 +536,64 @@ def translate(msg: Message, chat: int, turn: int, agents: AgentTracker | None = 
         out.append(TurnFinished(ts=ts, chat=chat, turn=turn, outcome="error" if msg.is_error else "done"))
     # SystemMessage, RateLimitEvent, ConversationResetMessage and the rest carry nothing for the app.
     return out
+
+
+# --- v0.28 (PORT-38): a message from another session ----------------------------
+
+# The engine's tool that sends one.
+PEER_SEND_TOOL = "SendMessage"
+# How the engine writes a peer's message into the conversation, as a user message
+# (checked 2026-11-20, CLI 2.1.310): its own sentence, then the tagged text, then its advice.
+_PEER_MESSAGE = re.compile(
+    r"\A\s*(?:Another Claude session sent a message:\s*)?<cross-session-message\b([^>]*)>\n?(.*?)\n?</cross-session-message>",
+    re.DOTALL,
+)
+_PEER_FROM = re.compile(r'\bfrom-name="([^"]*)"')
+
+
+def peer_message(content: Any) -> tuple[str, str] | None:
+    """``(sender's peer name, text)`` when a user message's content is a message from another session; else None.
+
+    ``content`` is a string, or blocks (dicts or the SDK's ``TextBlock``); only
+    its first text is looked at, and only its start.
+    """
+    text: Any = content
+    if isinstance(content, list):
+        text = None
+        for block in content:
+            found = block.get("text") if isinstance(block, Mapping) else getattr(block, "text", None)
+            if isinstance(found, str):
+                text = found
+                break
+    if not isinstance(text, str):
+        return None
+    match = _PEER_MESSAGE.match(text)
+    if match is None:
+        return None
+    sender = _PEER_FROM.search(match.group(1))
+    return (sender.group(1) if sender else ""), match.group(2).strip()
+
+
+def peer_notice(found: tuple[str, str], chat: int, ts: str, label: Any = None) -> ChatNotice:
+    """The quiet line for a peer's message; ``label`` (the owner's) turns its peer name into "Main" or "Thread 2"."""
+    name = found[0] or "another session"
+    shown = label(name) if callable(label) and found[0] else name
+    return ChatNotice(ts=ts, chat=chat, text=peer_notice_text(shown, found[1]), kind=PEER_NOTICE)
+
+
+def build_peer_send_hook():
+    """The ``PreToolUse`` hook on SendMessage: every send asks the person first.
+
+    The engine sends without asking (checked 2026-11-20); ``ask`` here puts
+    the call through ``can_use_tool``, so the person's card. Whom a ``to``
+    names (another session here or elsewhere, or one of the engine's own
+    subagents) cannot be told for certain, so none is let through unasked.
+    """
+
+    async def peer_send_hook(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask"}}
+
+    return peer_send_hook
 
 
 def opens_turn(msg: Message) -> bool:
@@ -983,6 +1062,61 @@ def build_mark_hook(bridge: Any, chat: int):
     return mark_hook
 
 
+SHARE_TOOL_DESCRIPTION = (
+    "Offer to share files with the person's team, when they asked for that in this conversation. Give the "
+    "files and a short note saying what they are for. It puts a card in the conversation; nothing is shared "
+    "unless the person presses Share on it. Returns at once."
+)
+
+
+def build_share_tool(callbacks: Any):
+    """The ``share_with_team`` tool (v0.28): the agent offers a share; only the person's Share sends anything.
+
+    Returns at once with what the owner answers; a refusal (no files, a
+    path that is not a file, a file already shared) is ``is_error``.
+    """
+
+    @tool(
+        SHARE_TOOL,
+        SHARE_TOOL_DESCRIPTION,
+        {
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "The files to share; a path may be relative to this session's folder.",
+                },
+                "note": {"type": "string", "description": "One or two sentences for the team: what the files are for."},
+            },
+            "required": ["files"],
+        },
+    )
+    async def share_with_team(args: dict[str, Any]) -> dict[str, Any]:
+        raw = args.get("files") or []
+        files = [f.strip() for f in raw if isinstance(f, str) and f.strip()] if isinstance(raw, list) else []
+        note = args.get("note")
+        text = await callbacks.on_share_with_team(files, note.strip() if isinstance(note, str) else "")
+        if text.startswith(SHARE_REFUSAL_PREFIX):
+            return {"content": [{"type": "text", "text": text}], "is_error": True}
+        return {"content": [{"type": "text", "text": text}]}
+
+    return share_with_team
+
+
+def build_share_hook(callbacks: Any):
+    """The ``PreToolUse`` hook on ``share_with_team``: the owner notes the call's id and input, which the card carries."""
+
+    async def share_hook(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
+        tool_input = input.get("tool_input") if isinstance(input, Mapping) else None
+        use_id = input.get("tool_use_id") if isinstance(input, Mapping) else None
+        if isinstance(tool_input, Mapping) and isinstance(use_id or tool_use_id, str):
+            callbacks.note_share_use(use_id or tool_use_id, dict(tool_input))
+        return {}
+
+    return share_hook
+
+
 def build_thread_tool(callbacks: Any):
     """The ``open_thread`` tool (v0.16): Main's agent proposes a thread; the person starts it or not.
 
@@ -1040,7 +1174,7 @@ def build_thread_hook(callbacks: Any):
 # (v0.16) for ``open_thread``, which only proposes.
 warnings.filterwarnings(
     "ignore",
-    message=rf"can_use_tool will not be invoked for: (?:(?:{'|'.join(re.escape(n) for n in (SHOW_TOOL_NAME, OPEN_THREAD_TOOL_NAME, *VIEWER_TOOL_NAMES, *COMMENT_TOOL_NAMES))})(?:, )?)+\.",
+    message=rf"can_use_tool will not be invoked for: (?:(?:{'|'.join(re.escape(n) for n in (SHOW_TOOL_NAME, OPEN_THREAD_TOOL_NAME, SHARE_TOOL_NAME, *VIEWER_TOOL_NAMES, *COMMENT_TOOL_NAMES))})(?:, )?)+\.",
     category=CanUseToolShadowedWarning,
 )
 
@@ -1124,6 +1258,19 @@ def build_options(
         tools.append(build_thread_tool(callbacks))
         allowed.append(OPEN_THREAD_TOOL_NAME)
         pre_tool_use.append(HookMatcher(matcher=OPEN_THREAD_TOOL_NAME, hooks=[build_thread_hook(callbacks)]))
+    if getattr(callbacks, "shares_with_team", False):
+        # v0.28: only where the deployment has team knowledge. It only offers; the person's Share sends.
+        tools.append(build_share_tool(callbacks))
+        allowed.append(SHARE_TOOL_NAME)
+        pre_tool_use.append(HookMatcher(matcher=SHARE_TOOL_NAME, hooks=[build_share_hook(callbacks)]))
+    peer = getattr(callbacks, "peer_name", None)
+    peer_args: dict[str, Any] = {}
+    if isinstance(peer, str) and peer:
+        # v0.28 (PORT-38): the engine takes this peer name, and its stream repeats the user
+        # messages it reads, so a peer's message can be shown (``translate`` drops the rest).
+        peer_args = {"extra_args": {"name": peer, "replay-user-messages": None}}
+        if getattr(callbacks, "peer_send", "ask") != "allow":
+            pre_tool_use.append(HookMatcher(matcher=PEER_SEND_TOOL, hooks=[build_peer_send_hook()]))
     if tools:
         extra = {
             "mcp_servers": {SHOW_SERVER: create_sdk_mcp_server(SHOW_SERVER, tools=tools)},
@@ -1152,6 +1299,7 @@ def build_options(
             "PreCompact": [HookMatcher(matcher=None, hooks=[build_compact_hook(callbacks)])],
             **({"PostToolUse": post_tool_use} if post_tool_use else {}),
         },
+        **peer_args,
         **extra,
     )
 
@@ -1429,10 +1577,16 @@ class SDKEngine:
         try:
             async for msg in self._client.receive_messages():
                 self._note_session(msg)
-                if self._between_turns() and opens_turn(msg):
+                # v0.28: a peer's message begins a turn too, even before any turn has run here.
+                peer = peer_message(msg.content) if isinstance(msg, UserMessage) and msg.parent_tool_use_id is None else None
+                if (self._between_turns() and opens_turn(msg)) or (peer is not None and self._idle()):
                     self.turn += 1
                     self._errors.reset()
                     await self._callbacks.on_event(TurnStarted(ts=_now(), chat=self.chat, turn=self.turn))
+                if peer is not None:
+                    await self._callbacks.on_event(
+                        peer_notice(peer, self.chat, _now(), getattr(self._callbacks, "peer_label", None))
+                    )
                 self._errors.note(msg)
                 for event in translate(msg, self.chat, self.turn, self.agents):
                     if isinstance(event, TurnFinished):
@@ -1452,6 +1606,10 @@ class SDKEngine:
     def _between_turns(self) -> bool:
         """A turn has run and none is in flight (the last one's result has come)."""
         return not self._closing and 0 < self.turn <= self._finished_turn
+
+    def _idle(self) -> bool:
+        """No turn is in flight, whether or not one has run."""
+        return not self._closing and self.turn <= self._finished_turn
 
     async def _report_lost_work(self) -> None:
         """The pump ended: the agents and workflows still open went with the engine."""
@@ -1843,7 +2001,11 @@ def _notification_fields(blocks: list[dict[str, Any]]) -> dict[str, str]:
 
 
 def history_events(
-    messages: Iterable[Mapping[str, Any]], chat: int, first_turn: int = 1, times: Mapping[str, str] | None = None
+    messages: Iterable[Mapping[str, Any]],
+    chat: int,
+    first_turn: int = 1,
+    times: Mapping[str, str] | None = None,
+    peer_label: Any = None,
 ) -> list[ServerMessage]:
     """Transcript messages (``read_history``'s dicts, or ``SessionMessage``-like) -> replay events. Pure.
 
@@ -1856,6 +2018,10 @@ def history_events(
     ``transcript_times``) gives the message's: then each event takes its
     message's entry time (``turn.finished`` the last event's), and a
     ``user.text`` or ``text.delta`` with no match gets ``no_time``.
+
+    v0.28: a message from another session (``peer_message``) starts a turn
+    nobody sent, with its quiet line (``peer_notice``; ``peer_label`` names
+    the sender) and no ``user.text``.
     """
     now = _now()
     ts = now
@@ -1892,7 +2058,12 @@ def history_events(
         role = m.get("type") or message.get("role")
         blocks = _blocks(message.get("content"))
         if role == "user":
-            text = _user_text(blocks)
+            peer = peer_message(blocks)
+            if peer is not None:
+                end()
+                begin()
+                out.append(peer_notice(peer, chat, ts, peer_label))
+            text = "" if peer is not None else _user_text(blocks)
             if not text and _is_continue(blocks):
                 # Review L5: the gateway carried the turn on after a sign-in: its note, between the replies.
                 out.append(ChatNotice(ts=ts, chat=chat, text=SIGNIN_CONTINUED_TEXT, kind=SIGNIN_CONTINUED_NOTICE))

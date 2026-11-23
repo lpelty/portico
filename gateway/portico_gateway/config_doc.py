@@ -146,6 +146,10 @@ KEY_DOCS: dict[str, KeyDoc] = {
     "sessions.lock_folder": KeyDoc('True fixes "Works in" to the deployment\'s folder.', "lock_folder = false"),
     # --- threads ----------------------------------------------------------------------
     "threads.max": KeyDoc("Threads open beside Main, 0 to 2; 0 turns threads off.", "max = 2", scope="either"),
+    "threads.messages": KeyDoc(
+        '`"ask"`: every message Main or a thread sends (to another session, or to one of its own subagents) waits for the person\'s yes on a card. `"allow"`: it is sent without one.',
+        'messages = "allow"', scope="either",
+    ),
     # --- files ------------------------------------------------------------------------
     "files.hide_session_folder": KeyDoc("True lists only the [[roots]] in the Files pane, not the session's own folder.", "hide_session_folder = false", scope="either"),
     # --- viewer -----------------------------------------------------------------------

@@ -69,6 +69,9 @@ enum CommentFormat {
         /// v0.25 (#3, ruling 22): starts or ends inside an autolink, a bare URL or an HTML
         /// entity, where the markers would break it. Refused, not widened.
         case insideAtom
+        /// v0.28: starts or ends inside an inline code span. The whole code can be anchored
+        /// (the markers go outside its backticks); part of it can't.
+        case insideCodeSpan
     }
 
     enum EditError: Error, Equatable {
@@ -167,6 +170,8 @@ enum CommentFormat {
         var blocks: [Block]
         var segs: [Segment]
         var tables: [(Int, Int, Int)] = []
+        /// Inline code spans, backticks included (also in `ignored`).
+        var spans: [Range<Int>] = []
     }
 
     // MARK: block starts (CommonMark, as far as comments need it)
@@ -534,8 +539,42 @@ enum CommentFormat {
             pos = max(pos, w.upperBound)
         }
         if pos < t.count { segments.append(pos..<t.count) }
-        let ignored = (coarseAll + codeSpans(t, segments)).sorted { $0.lowerBound < $1.lowerBound }
-        return Regions(lines: ls, frontMatter: fm, ignored: ignored, blocks: blocks, segs: segs, tables: tbls)
+        let spans = codeSpans(t, segments)
+        let ignored = (coarseAll + spans).sorted { $0.lowerBound < $1.lowerBound }
+        return Regions(lines: ls, frontMatter: fm, ignored: ignored, blocks: blocks, segs: segs, tables: tbls, spans: spans)
+    }
+
+    /// An inline code span's parts (v0.28): its content (between the backtick runs) and the
+    /// part of it a reader sees as the code (without the whitespace at its ends).
+    fileprivate static func spanParts(_ t: U, _ span: Range<Int>) -> (content: Range<Int>, shown: Range<Int>) {
+        var n = span.lowerBound
+        while n < span.upperBound, t[n] == backtick { n += 1 }
+        let run = n - span.lowerBound
+        let ca = span.lowerBound + run, cb = span.upperBound - run
+        var ia = ca, ib = cb
+        while ia < ib, asciiSpace(t[ia]) { ia += 1 }
+        while ib > ia, asciiSpace(t[ib - 1]) { ib -= 1 }
+        if ia == ib { return (ca..<cb, ca..<cb) }
+        return (ca..<cb, ia..<ib)
+    }
+
+    /// Inline code spans, backticks included (v0.28: the code in one can be commented as a whole).
+    static func inlineCodeSpans(_ text: String) -> [Range<Int>] { regions(u(text)).spans }
+
+    /// Front matter and code blocks (fenced and indented): what can't be commented at all.
+    static func blockCodeRegions(_ text: String) -> [Range<Int>] {
+        let r = regions(u(text))
+        let spans = Set(r.spans)
+        return r.ignored.filter { !spans.contains($0) }
+    }
+
+    /// A range that starts or ends inside an inline code span, widened to the whole span.
+    static func widenToCodeSpans(_ text: String, _ range: Range<Int>) -> Range<Int> {
+        var r = range
+        for span in regions(u(text)).spans where span.overlaps(r) {
+            r = min(r.lowerBound, span.lowerBound)..<max(r.upperBound, span.upperBound)
+        }
+        return r
     }
 
     /// Front matter, ``` and ~~~ fences, indented code blocks, and inline code spans.
@@ -1108,14 +1147,32 @@ enum CommentFormat {
             }
         }
         var zero: [Range<Int>] = []
+        // v0.28: inline code is text a reader sees. Its backticks are zero-width, and so is the
+        // one space CommonMark drops from each end of a span that begins and ends with one.
+        let spanSet = Set(r.spans)
+        let blockCode = r.ignored.filter { !spanSet.contains($0) }
+        for span in r.spans {
+            let (content, shown) = spanParts(t, span)
+            zero.append(span.lowerBound..<content.lowerBound)
+            zero.append(content.upperBound..<span.upperBound)
+            if content.count >= 2, t[content.lowerBound] == sp || t[content.lowerBound] == nl,
+                t[content.upperBound - 1] == sp || t[content.upperBound - 1] == nl,
+                shown.lowerBound > content.lowerBound, shown.upperBound < content.upperBound
+            {
+                zero.append(content.lowerBound..<(content.lowerBound + 1))
+                zero.append((content.upperBound - 1)..<content.upperBound)
+            }
+        }
         var zi = 0
         while zi + 1 < t.count {
-            if t[zi] == backslash, t[zi + 1] == 124, !inside(r.ignored, zi) { zero.append(zi..<(zi + 1)) }
+            if t[zi] == backslash, t[zi + 1] == 124, !inside(blockCode, zi) { zero.append(zi..<(zi + 1)) }
             zi += 1
         }
         var wallAt: [Int: Int] = [:]
         for w in walls where (wallAt[w.lowerBound] ?? -1) < w.upperBound { wallAt[w.lowerBound] = w.upperBound }
-        let ms = (markers(t).map(\.range) + zero).sorted { $0.lowerBound < $1.lowerBound }
+        // A marker inside code is the code's own text, not a marker.
+        let ms = (markers(t).map(\.range).filter { !inside(r.ignored, $0.lowerBound) } + zero)
+            .sorted { $0.lowerBound < $1.lowerBound }
         let segEnds = Set(r.segs.map { r.lines[$0.last].end })
         var v = Visible()
         v.dropped = dropped
@@ -1157,11 +1214,11 @@ enum CommentFormat {
                         if rest, e < t.count { brk = true }
                     }
                 }
-                v.space(i, inside(r.ignored, i), brk)
+                v.space(i, inside(blockCode, i), brk)
                 i += 1
                 continue
             }
-            v.chars.append(c); v.src.append(i); v.ignored.append(inside(r.ignored, i)); v.breaks.append(false)
+            v.chars.append(c); v.src.append(i); v.ignored.append(inside(blockCode, i)); v.breaks.append(false)
             i += 1
         }
         return v
@@ -1194,7 +1251,7 @@ enum CommentFormat {
     {
         guard !q.isEmpty else { return .failure(.notFound) }
         // Each match, and whether it splits a link or an entity (it still counts as an occurrence).
-        var good: [(span: Range<Int>, splits: Bool)] = []
+        var good: [(span: Range<Int>, refusal: Refusal?)] = []
         let atoms = atoms(t)
         var inCode = false, crosses = false, notShown = false
         var i = find(v.chars, q, from: 0)
@@ -1210,13 +1267,14 @@ enum CommentFormat {
             } else if v.breaks[a..<b].contains(true) {
                 crosses = true
             } else {
-                good.append((span, atoms.contains { splits(span, $0) }))
+                let split = atoms.filter { splits(span, $0) }
+                good.append((span, split.isEmpty ? nil : split.contains { !$0.code } ? .insideAtom : .insideCodeSpan))
             }
             i = find(v.chars, q, from: b)
         }
         if occurrence >= 1, occurrence <= good.count {
             let match = good[occurrence - 1]
-            if match.splits { return .failure(.insideAtom) }
+            if let refusal = match.refusal { return .failure(refusal) }
             let r = match.span
             return .success(selection ? snapSelection(t, r) : snapGraphemes(t, r))
         }
@@ -1241,7 +1299,7 @@ enum CommentFormat {
     private static let urlTrailing: Set<UInt16> = Set(".,:;!?)]'\"".utf16)
 
     /// An atom's source range and the part a quote may cover in its place (an autolink's address).
-    fileprivate struct Atom { let range: Range<Int>; let inner: Range<Int> }
+    fileprivate struct Atom { let range: Range<Int>; let inner: Range<Int>; var code = false }
 
     fileprivate static func atoms(_ t: U) -> [Atom] {
         let text = s(t[...]) as NSString
@@ -1257,6 +1315,10 @@ enum CommentFormat {
             if end > r.lowerBound { out.append(Atom(range: r.lowerBound..<end, inner: r.lowerBound..<end)) }
         }
         out += ranges(entityPattern).map { Atom(range: $0, inner: $0) }
+        // v0.28: in inline code a link or an entity is the code's own text; the span itself is the atom.
+        let spans = regions(t).spans
+        out = out.filter { !inside(spans, $0.range.lowerBound) }
+        out += spans.map { Atom(range: $0, inner: spanParts(t, $0).shown, code: true) }
         return out
     }
 
