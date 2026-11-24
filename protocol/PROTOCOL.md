@@ -1716,6 +1716,13 @@ gateway. Nothing is added to the protocol but one `chat.notice` kind.
   a `to` names, so a message to one of the engine's own subagents is asked
   about too. Config `[threads] messages = "allow"` sends without the card.
   The tool row's summary is `<peer name>: <the message's summary>`.
+- **Sending shows a line too** (v0.28.2). Once a send has been answered as
+  sent, the sending chat gets `chat.notice` with `kind: "peer.message"`
+  and text `Message to Thread 2: <text>` (or `Main`, or the name the
+  message was sent to), right after the send's `tool.finished`: the
+  message's text on one line, 600 characters at most. A send the person
+  refused, or one the engine could not deliver, has no line. It is
+  stamped, and `chat.history` has one in the same place.
 - **Receiving.** The message begins a turn nobody sent in the receiving
   chat (`turn.started`, no `user.text`), even when no turn has run there.
   Right after it comes `chat.notice` with `kind: "peer.message"` and text
