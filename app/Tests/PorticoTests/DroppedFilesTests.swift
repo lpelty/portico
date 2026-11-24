@@ -63,6 +63,24 @@ final class DroppedFilesTests: XCTestCase {
         XCTAssertNil(model.draftAttachments[5])
     }
 
+    /// Image data is saved off the main thread and attached after the drop
+    /// handler has returned: the model keeps what attaches it.
+    func testDraggedImageDataIsAttachedOnceItIsSaved() async throws {
+        let image = NSImage(size: NSSize(width: 2, height: 2))
+        image.lockFocus()
+        NSColor.red.drawSwatch(in: NSRect(x: 0, y: 0, width: 2, height: 2))
+        image.unlockFocus()
+        pasteboard.clearContents()
+        pasteboard.setData(try XCTUnwrap(image.tiffRepresentation), forType: .tiff)
+        XCTAssertTrue(model.attachDropped(from: pasteboard, to: 3))
+        for _ in 0..<200 where model.draftAttachments[3] == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let saved = try XCTUnwrap(model.draftAttachments[3])
+        XCTAssertEqual(saved.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: saved[0]))
+    }
+
     func testDraggedTextAndALinkAreRefused() {
         pasteboard.clearContents()
         pasteboard.setString("some words", forType: .string)

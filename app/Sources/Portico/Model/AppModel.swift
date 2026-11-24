@@ -2710,14 +2710,17 @@ final class AppModel: ObservableObject {
     func attachDropped(from pasteboard: NSPasteboard = NSPasteboard(name: .drag), to chat: Int) -> Bool {
         // What a drop held and what came of it: types only, never a name or a path.
         let held = (pasteboard.types ?? []).map(\.rawValue).joined(separator: ", ")
-        let intake = makeIntake { [weak self] paths in
-            Self.dropLog.notice("drop: attached \(paths.count)")
-            self?.attach(paths, to: chat)
-        }
+        // Kept: a promised file and dragged image data are attached after
+        // this returns, through the intake, which nothing else holds.
+        let intake = dropIntakes[chat] ?? makeIntake { [weak self] paths in self?.attach(paths, to: chat) }
+        dropIntakes[chat] = intake
         let taken = intake.take(from: pasteboard, dropping: true)
         Self.dropLog.notice("drop: [\(held, privacy: .public)] -> \(taken ? "taken" : "refused")")
         return taken
     }
+
+    /// Each chat's intake for drops over its conversation, kept for what is attached later.
+    private var dropIntakes: [Int: ComposerIntake] = [:]
 
     func detach(_ path: String, from chat: Int) {
         draftAttachments[chat] = (draftAttachments[chat] ?? []).filter { $0 != path }
