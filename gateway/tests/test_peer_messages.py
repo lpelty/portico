@@ -14,11 +14,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from claude_agent_sdk import UserMessage
+from claude_agent_sdk import AssistantMessage, ToolResultBlock, ToolUseBlock, UserMessage
 
 from portico_gateway.config import ConfigError
 from portico_gateway.engine import (
     PEER_SEND_TOOL,
+    PeerSends,
     build_options,
     build_peer_send_hook,
     history_events,
@@ -219,6 +220,104 @@ def test_a_replayed_transcript_shows_the_message_not_a_bubble() -> None:
     assert [e.turn for e in events if isinstance(e, TurnFinished)] == [1, 2]
     bare = history_events(transcript, 7)
     assert next(e for e in bare if isinstance(e, ChatNotice)).text == "Message from work-ffff-thread-2: I renamed a.md to b.md."
+
+
+# --- v0.28.2: the sending conversation shows what it sent -----------------------
+
+GONE = json.dumps(
+    {"success": False, "message": "No agent named 'work-ab12-thread-1' is reachable.\nUse ListAgents to see everyone you can message."},
+    separators=(",", ":"),
+)
+
+
+def test_the_line_for_a_sent_message_reads_like_the_received_one() -> None:
+    assert peer_notice_text("Thread 2", "I changed\n  notes.md.\n", sent=True) == "Message to Thread 2: I changed notes.md."
+    assert peer_notice_text("Main", "  ", sent=True) == "Message to Main"
+    long = peer_notice_text("Main", "x" * 2000, sent=True)
+    assert len(long) == len("Message to Main: ") + PEER_TEXT_LIMIT and long.endswith("…")
+
+
+def test_a_send_counts_as_sent_only_when_its_answer_says_so() -> None:
+    sends = PeerSends()
+    sends.started("t1", PEER_SEND_TOOL, {"to": " work-ab12-thread-1 ", "summary": "short", "message": "The whole\nmessage."})
+    assert sends.finished("t1", False, '{"success":true}') == ("work-ab12-thread-1", "The whole\nmessage.")
+    assert sends.finished("t1", False, '{"success":true}') is None, "answered once"
+
+    sends.started("t2", PEER_SEND_TOOL, {"to": "work-ab12-main", "summary": "only a summary"})
+    assert sends.finished("t2", None, [{"type": "text", "text": "Message sent."}]) == ("work-ab12-main", "only a summary")
+
+    sends.started("t3", PEER_SEND_TOOL, {"to": "work-ab12-thread-1", "message": "x"})
+    assert sends.finished("t3", False, GONE) is None, "the peer is gone: nothing went"
+    sends.started("t4", PEER_SEND_TOOL, {"to": "work-ab12-thread-1", "message": "x"})
+    assert sends.finished("t4", True, "The user doesn't want to proceed with this tool use.") is None, "refused on the card"
+
+    sends.started("t5", "Bash", {"to": "work-ab12-main", "message": "x"})
+    sends.started("t6", PEER_SEND_TOOL, {"message": "to nobody"})
+    sends.started("t7", PEER_SEND_TOOL, None)
+    sends.started(None, PEER_SEND_TOOL, {"to": "work-ab12-main", "message": "x"})
+    assert [sends.finished(i, False, "ok") for i in ("t5", "t6", "t7", None, "never-started")] == [None] * 5
+
+
+def _send(tool_use_id: str, to: str, message: str, parent: str | None = None) -> AssistantMessage:
+    block = ToolUseBlock(id=tool_use_id, name=PEER_SEND_TOOL, input={"to": to, "summary": "s", "message": message})
+    return AssistantMessage(content=[block], model="m", parent_tool_use_id=parent)
+
+
+def _answer(tool_use_id: str, content: str, is_error: bool = False, parent: str | None = None) -> UserMessage:
+    return UserMessage(
+        content=[ToolResultBlock(tool_use_id=tool_use_id, content=content, is_error=is_error)], parent_tool_use_id=parent
+    )
+
+
+async def test_the_sending_conversation_shows_a_message_to_line_after_the_send(tmp_path: Path, sdk_client: Any) -> None:  # noqa: F811
+    cb = Owner("work-ab12-main", send="allow")
+    eng, client = await _started_engine(tmp_path, cb)
+    client.script = [
+        _send("t1", "work-ab12-thread-2", "notes.md is mine now."),
+        _answer("t1", '{"success":true}'),
+        _send("t2", "work-ab12-thread-1", "Are you there?"),
+        _answer("t2", GONE),
+        _send("t3", "work-ab12-thread-2", "never allowed"),
+        _answer("t3", "The user doesn't want to proceed with this tool use.", is_error=True),
+        _send("t4", "work-ab12-thread-2", "a subagent's send", parent="agent-1"),
+        _answer("t4", '{"success":true}', parent="agent-1"),
+        _text_delta("Told Thread 2."),
+        _result(),
+    ]
+    await eng.send("tell thread 2")
+    await _until(lambda: len(_finished(cb)) == 1)
+    notices = [e for e in cb.events if isinstance(e, ChatNotice)]
+    assert [(n.kind, n.text) for n in notices] == [(PEER_NOTICE, "Message to Thread 2: notes.md is mine now.")]
+    names = [type(e).__name__ for e in cb.events]
+    at = names.index("ChatNotice")
+    assert names[at - 1] == "ToolFinished", "the line comes once the send has been answered"
+    await eng.close()
+
+
+def test_a_replayed_transcript_shows_the_sent_line_too() -> None:
+    def call(tool_use_id: str, to: str, message: str) -> dict[str, Any]:
+        block = {"type": "tool_use", "id": tool_use_id, "name": PEER_SEND_TOOL, "input": {"to": to, "message": message}}
+        return {"type": "assistant", "uuid": "a" + tool_use_id, "message": {"role": "assistant", "content": [block]}}
+
+    def result(tool_use_id: str, content: str, is_error: bool = False) -> dict[str, Any]:
+        block = {"type": "tool_result", "tool_use_id": tool_use_id, "content": content, "is_error": is_error}
+        return {"type": "user", "uuid": "u" + tool_use_id, "message": {"role": "user", "content": [block]}}
+
+    transcript = [
+        {"type": "user", "uuid": "u0", "message": {"role": "user", "content": "tell main"}},
+        call("t1", "work-ffff-main", "a.md is now b.md."),
+        result("t1", '{"success":true}'),
+        call("t2", "work-ffff-thread-2", "hello?"),
+        result("t2", GONE),
+    ]
+    events = history_events(transcript, 7, peer_label=lambda name: peer_label(name, "work"))
+    assert [type(e).__name__ for e in events] == [
+        "TurnStarted", "UserText", "ToolStarted", "ToolFinished", "ChatNotice", "ToolStarted", "ToolFinished", "TurnFinished",
+    ]
+    notice = next(e for e in events if isinstance(e, ChatNotice))
+    assert (notice.kind, notice.text, notice.chat) == (PEER_NOTICE, "Message to Main: a.md is now b.md.", 7)
+    bare = history_events(transcript, 7)
+    assert next(e for e in bare if isinstance(e, ChatNotice)).text == "Message to work-ffff-main: a.md is now b.md."
 
 
 # --- Main and a thread in one gateway -----------------------------------------

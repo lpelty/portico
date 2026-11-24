@@ -581,6 +581,52 @@ def peer_notice(found: tuple[str, str], chat: int, ts: str, label: Any = None) -
     return ChatNotice(ts=ts, chat=chat, text=peer_notice_text(shown, found[1]), kind=PEER_NOTICE)
 
 
+class PeerSends:
+    """v0.28.2: the SendMessage calls still waiting for their answer, so the sending conversation can show what went.
+
+    ``started`` notes a call; ``finished`` gives ``(recipient's name, text)``
+    when that call's answer says the message was sent, else None: a call
+    that was not a send, one the person or the engine refused (``is_error``),
+    and one the engine could not deliver (``{"success": false, …}``).
+    """
+
+    def __init__(self) -> None:
+        self._open: dict[str, tuple[str, str]] = {}
+
+    def started(self, tool_use_id: Any, tool: Any, input: Any) -> None:
+        if tool != PEER_SEND_TOOL or not isinstance(tool_use_id, str) or not tool_use_id or not isinstance(input, Mapping):
+            return
+        to, message = input.get("to"), input.get("message")
+        if not isinstance(message, str) or not message.strip():
+            message = input.get("summary")
+        if isinstance(to, str) and to.strip():
+            self._open[tool_use_id] = (to.strip(), message if isinstance(message, str) else "")
+
+    def finished(self, tool_use_id: Any, is_error: Any, content: Any) -> tuple[str, str] | None:
+        sent = self._open.pop(tool_use_id, None) if isinstance(tool_use_id, str) else None
+        if sent is None or is_error or _send_failed(content):
+            return None
+        return sent
+
+
+def _send_failed(content: Any) -> bool:
+    """Whether a SendMessage answer says ``"success": false`` (the peer is gone)."""
+    text = _result_text(content).lstrip()
+    if not text.startswith('{"success"'):
+        return False
+    try:
+        answer = json.loads(text)
+    except ValueError:
+        return False
+    return isinstance(answer, dict) and answer.get("success") is False
+
+
+def peer_sent_notice(sent: tuple[str, str], chat: int, ts: str, label: Any = None) -> ChatNotice:
+    """The quiet line in the sending conversation; ``label`` as in ``peer_notice``."""
+    shown = label(sent[0]) if callable(label) else sent[0]
+    return ChatNotice(ts=ts, chat=chat, text=peer_notice_text(shown, sent[1], sent=True), kind=PEER_NOTICE)
+
+
 def build_peer_send_hook():
     """The ``PreToolUse`` hook on SendMessage: every send asks the person first.
 
@@ -1517,6 +1563,7 @@ class SDKEngine:
         self._closing = False
         # v0.25: the turn's error detail, attached to its ``turn.finished``.
         self._errors = TurnErrors()
+        self._peer_sends = PeerSends()
         # Slash command names (no ``/``) from the engine's initialize answer
         # and its ``init`` message; ``None`` until either has said.
         self._commands: set[str] | None = None
@@ -1572,6 +1619,23 @@ class SDKEngine:
             log.debug("chat %s: no init message within %.1fs; session id follows the first turn", self.chat, self.init_timeout)
         return self.session_id or ""
 
+    def _sent_to_peers(self, msg: Any) -> list[tuple[str, str]]:
+        """The sends this message answers as sent (``PeerSends``); a subagent's calls are not the conversation's."""
+        if getattr(msg, "parent_tool_use_id", None) is not None or isinstance(getattr(msg, "content", None), str):
+            return []
+        out: list[tuple[str, str]] = []
+        if isinstance(msg, AssistantMessage):
+            for block in msg.content:
+                if isinstance(block, ToolUseBlock):
+                    self._peer_sends.started(block.id, block.name, block.input)
+        elif isinstance(msg, UserMessage):
+            for block in msg.content:
+                if isinstance(block, ToolResultBlock):
+                    sent = self._peer_sends.finished(block.tool_use_id, block.is_error, block.content)
+                    if sent is not None:
+                        out.append(sent)
+        return out
+
     async def _run_pump(self) -> None:
         assert self._client is not None and self._callbacks is not None
         try:
@@ -1592,6 +1656,11 @@ class SDKEngine:
                     if isinstance(event, TurnFinished):
                         self._finished_turn = event.turn
                     await self._callbacks.on_event(self._errors.attach(event))
+                # v0.28.2: a message this conversation sent shows as a quiet line too, once it has gone.
+                for sent in self._sent_to_peers(msg):
+                    await self._callbacks.on_event(
+                        peer_sent_notice(sent, self.chat, _now(), getattr(self._callbacks, "peer_label", None))
+                    )
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -2021,8 +2090,10 @@ def history_events(
 
     v0.28: a message from another session (``peer_message``) starts a turn
     nobody sent, with its quiet line (``peer_notice``; ``peer_label`` names
-    the sender) and no ``user.text``.
+    the sender) and no ``user.text``. v0.28.2: a message this conversation
+    sent has its line after the send's ``tool.finished`` (``PeerSends``).
     """
+    sends = PeerSends()
     now = _now()
     ts = now
     no_time: bool | None = None
@@ -2113,6 +2184,9 @@ def history_events(
                         else None,
                     )
                 )
+                sent = sends.finished(block.get("tool_use_id"), block.get("is_error"), block.get("content"))
+                if sent is not None:
+                    out.append(peer_sent_notice(sent, chat, ts, peer_label))
                 agent = str(block.get("tool_use_id") or "")
                 summary = result_summary(block.get("content"))
                 if agent in running and not summary.startswith(ASYNC_AGENT_RESULT):
@@ -2158,6 +2232,7 @@ def history_events(
                             input=dict(input),
                         )
                     )
+                    sends.started(block.get("id"), name, input)
                     if name in AGENT_TOOLS and block.get("id"):
                         agent = str(block["id"])
                         running.add(agent)

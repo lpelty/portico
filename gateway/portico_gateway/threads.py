@@ -165,9 +165,10 @@ def peers_prompt(folder_name: str, token: str, slot: int | None, limit: int) -> 
     return PEERS_PROMPT.format(own=peer_name(folder_name, token, slot), others=", ".join(others))
 
 
-def peer_notice_text(label: str, body: str) -> str:
-    """The quiet line for a message from ``label``: its text on one line, cut at ``PEER_TEXT_LIMIT``."""
+def peer_notice_text(label: str, body: str, sent: bool = False) -> str:
+    """The quiet line for a message from ``label`` (to it, when ``sent``): its text on one line, cut at ``PEER_TEXT_LIMIT``."""
     text = " ".join(body.split())
     if len(text) > PEER_TEXT_LIMIT:
         text = text[: PEER_TEXT_LIMIT - 1].rstrip() + "…"
-    return f"Message from {label}: {text}" if text else f"Message from {label}"
+    lead = f"Message to {label}" if sent else f"Message from {label}"
+    return f"{lead}: {text}" if text else lead

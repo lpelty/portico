@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.28.2 (2026-11-24)
+
+- **A sent message shows in the conversation that sent it.** When Main or
+  a thread messages another conversation, the sender now shows "Message to
+  Thread 2: …" once the message has gone, the way the receiver shows
+  "Message from Main: …". A message that was refused, or could not be
+  delivered, shows no line.
+
 ## v0.28.1 (2026-11-24)
 
 - **A file dropped over the conversation is attached.** In v0.28.0 a file
