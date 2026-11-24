@@ -828,6 +828,7 @@ final class AppModel: ObservableObject {
     // MARK: - v0.22: space actions, notices, fixed spaces, refreshing
 
     nonisolated static let spacesLog = Logger(subsystem: "Portico", category: "spaces")
+    nonisolated static let dropLog = Logger(subsystem: "Portico", category: "drop")
 
     /// The open space's pane scrolls to `fragment` once (S2: a click on a
     /// worded notice). `serial` makes a second click a new request.
@@ -2700,18 +2701,26 @@ final class AppModel: ObservableObject {
     }
 
     /// A drop over the conversation or its message box (v0.28, PORT-79):
-    /// files on disk, and promised files once they have been written to the
-    /// pending folder, become the draft's attachments. The task is returned
-    /// for tests.
+    /// files on disk become the draft's attachments, and promised files once
+    /// they have been written to the pending folder. Read from the drag's
+    /// pasteboard, before this returns, as a drop on the message text is
+    /// (`ComposerIntake`): see `DroppedFiles`. `false`: the drop held nothing
+    /// to attach (text, a link), and is refused.
     @discardableResult
-    func attachDropped(_ providers: [NSItemProvider], to chat: Int) -> Task<DroppedFiles.Result, Never> {
-        let folder = attachmentsHome.map(PastedImages.pendingFolder(home:))
-        return Task { [weak self] in
-            let result = await DroppedFiles.load(providers, promisedInto: folder)
-            if !result.paths.isEmpty { self?.attach(result.paths, to: chat) }
-            return result
-        }
+    func attachDropped(from pasteboard: NSPasteboard = NSPasteboard(name: .drag), to chat: Int) -> Bool {
+        // What a drop held and what came of it: types only, never a name or a path.
+        let held = (pasteboard.types ?? []).map(\.rawValue).joined(separator: ", ")
+        // Kept: a promised file and dragged image data are attached after
+        // this returns, through the intake, which nothing else holds.
+        let intake = dropIntakes[chat] ?? makeIntake { [weak self] paths in self?.attach(paths, to: chat) }
+        dropIntakes[chat] = intake
+        let taken = intake.take(from: pasteboard, dropping: true)
+        Self.dropLog.notice("drop: [\(held, privacy: .public)] -> \(taken ? "taken" : "refused")")
+        return taken
     }
+
+    /// Each chat's intake for drops over its conversation, kept for what is attached later.
+    private var dropIntakes: [Int: ComposerIntake] = [:]
 
     func detach(_ path: String, from chat: Int) {
         draftAttachments[chat] = (draftAttachments[chat] ?? []).filter { $0 != path }

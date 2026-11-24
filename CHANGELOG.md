@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.28.1 (2026-11-24)
+
+- **A file dropped over the conversation is attached.** In v0.28.0 a file
+  dropped on the transcript, or just outside the message text, showed the
+  copy pointer and was not attached; only a drop on the message text
+  worked. A drop anywhere over the conversation is now read the way a drop
+  on the message text is.
+
 ## v0.28.0 (2026-11-20)
 
 Threads, comments and a group of small things that had been waiting.
