@@ -95,11 +95,10 @@ struct InputBar: View {
             composer
         }
         // v0.28 (PORT-79): the same drop as anywhere over the conversation, promised files included.
-        .onDrop(of: DroppedFiles.types, isTargeted: nil) { providers in
+        .onDrop(of: DroppedFiles.types, isTargeted: nil) { _ in
+            // Read from the drag's pasteboard, not the providers (PORT-87).
             // Text, a link: not a file, so the drop is refused and nothing is attached.
-            guard DroppedFiles.takes(providers) else { return false }
-            model.attachDropped(providers, to: chat)
-            return true
+            model.attachDropped(to: chat)
         }
         .onAppear { editorFocused = true }
         .onChange(of: model.composerFocusRequests) { editorFocused = true }

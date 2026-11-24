@@ -2701,23 +2701,22 @@ final class AppModel: ObservableObject {
     }
 
     /// A drop over the conversation or its message box (v0.28, PORT-79):
-    /// files on disk, and promised files once they have been written to the
-    /// pending folder, become the draft's attachments. The reading is begun
-    /// before this returns: a drop's providers give nothing once the drop
-    /// handler has returned. The task is returned for tests.
+    /// files on disk become the draft's attachments, and promised files once
+    /// they have been written to the pending folder. Read from the drag's
+    /// pasteboard, before this returns, as a drop on the message text is
+    /// (`ComposerIntake`): see `DroppedFiles`. `false`: the drop held nothing
+    /// to attach (text, a link), and is refused.
     @discardableResult
-    func attachDropped(_ providers: [NSItemProvider], to chat: Int) -> Task<DroppedFiles.Result, Never> {
-        let folder = attachmentsHome.map(PastedImages.pendingFolder(home:))
-        let reading = DroppedFiles.begin(providers, promisedInto: folder)
-        // What a drop held and what came of it: types and counts only, never a name or a path.
-        let held = providers.map { "\(DroppedFiles.takes($0) ? "file" : "left") \($0.registeredTypeIdentifiers)" }.joined(separator: "; ")
-        return Task { [weak self] in
-            let result = await reading.value
-            Self.dropLog.notice(
-                "drop: \(held, privacy: .public) -> attached \(result.paths.count), folders \(result.folders), failed \(result.failed)")
-            if !result.paths.isEmpty { self?.attach(result.paths, to: chat) }
-            return result
+    func attachDropped(from pasteboard: NSPasteboard = NSPasteboard(name: .drag), to chat: Int) -> Bool {
+        // What a drop held and what came of it: types only, never a name or a path.
+        let held = (pasteboard.types ?? []).map(\.rawValue).joined(separator: ", ")
+        let intake = makeIntake { [weak self] paths in
+            Self.dropLog.notice("drop: attached \(paths.count)")
+            self?.attach(paths, to: chat)
         }
+        let taken = intake.take(from: pasteboard, dropping: true)
+        Self.dropLog.notice("drop: [\(held, privacy: .public)] -> \(taken ? "taken" : "refused")")
+        return taken
     }
 
     func detach(_ path: String, from chat: Int) {

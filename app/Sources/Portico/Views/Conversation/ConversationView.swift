@@ -136,11 +136,10 @@ struct ConversationView: View {
         }
         // v0.28 (PORT-79): a file dropped anywhere over the conversation is
         // attached to its message box. An ended session has no box: no drop.
-        .onDrop(of: model.showsEarlierBar(chat: chat) ? [] : DroppedFiles.types, isTargeted: nil) { providers in
+        .onDrop(of: model.showsEarlierBar(chat: chat) ? [] : DroppedFiles.types, isTargeted: nil) { _ in
+            // Read from the drag's pasteboard, not the providers (PORT-87).
             // Text, a link: not a file, so the drop is refused and nothing is attached.
-            guard DroppedFiles.takes(providers) else { return false }
-            model.attachDropped(providers, to: chat)
-            return true
+            model.attachDropped(to: chat)
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
             conversationHeight = $0
